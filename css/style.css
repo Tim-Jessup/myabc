@@ -103,6 +103,8 @@ h1, h2, h3, p { margin: 0; }
 .pad.yes { border-color: var(--yes); animation: pop .45s; }
 .pad canvas { position: absolute; left: -4px; top: -4px; }
 .pad #ink { touch-action: none; }
+.pad #hint { animation: glow 1.1s ease-in-out infinite alternate; }
+@keyframes glow { from { opacity: .35; } to { opacity: 1; } }
 .trace-btns { display: flex; justify-content: space-between; padding: 16px 12px 0; }
 
 /* ----- end of round ----- */

@@ -69,6 +69,16 @@
   })();
 
   /* ---------- speech + sound ---------- */
+  /* Pip's voice: every line has a recording in audio/ (made by tools/make_voice.py),
+     so it sounds the same on every phone and works offline. The phone's own
+     text-to-speech is only a fallback for anything without a recording. */
+  const Voice = { clips: {}, ready: false };
+  Voice.load = fetch('audio/index.json').then(r => (r.ok ? r.json() : null)).then(j => {
+    if (j && j.clips) { Voice.clips = j.clips; Voice.ready = true; }
+  }).catch(() => {});
+  const voiceUrl = text => { const f = Voice.clips[LINES.key(text)]; return f ? 'audio/' + f + '.mp3' : null; };
+  const RATE = () => (store.settings.rate < 0.8 ? 0.85 : store.settings.rate < 0.95 ? 1 : 1.15);
+
   let voice = null;
   const hasSpeech = 'speechSynthesis' in window;
   function pickVoice() {
@@ -91,43 +101,78 @@
         if (voice) { u.voice = voice; u.lang = voice.lang; } else u.lang = 'en-AU';
         u.rate = store.settings.rate;
         u.onend = fin; u.onerror = fin;
+        speechSynthesis.resume(); // Chrome can get stuck paused
         speechSynthesis.speak(u);
       } catch (e) { fin(); }
       setTimeout(fin, 1500 + text.length * 120); // never hang if the phone stays silent
     });
   }
-  let player = null;
-  function playClip(id) {
+
+  // One audio element, reused: phones only let a page play sound after a tap,
+  // and reusing the element that was first played from a tap keeps that permission.
+  const player = new Audio();
+  player.preload = 'auto';
+  function playUrl(url, rate = 1) {
     return new Promise(res => {
-      const url = Clips.url(id);
       if (!url) return res();
       let done = false;
-      const fin = () => { if (!done) { done = true; res(); } };
+      const fin = () => { if (!done) { done = true; player.onended = player.onerror = null; res(); } };
       try {
-        player = new Audio(url);
         player.onended = fin; player.onerror = fin;
+        player.src = url;
+        player.playbackRate = rate;
+        player.defaultPlaybackRate = rate;
         player.play().catch(fin);
       } catch (e) { fin(); }
-      setTimeout(fin, 6000);
+      setTimeout(fin, 8000);
     });
   }
+  const playClip = id => playUrl(Clips.url(id));
   const talk = on => document.querySelectorAll('.pal').forEach(p => p.classList.toggle('talk', on));
+  const stopAll = () => { try { player.pause(); if (hasSpeech) speechSynthesis.cancel(); } catch (e) { /* ok */ } };
 
   // say('text'), say({clip:'snd-b'}) or a list of both, played in order.
   let sayTok = 0;
   async function say(parts) {
     const tok = ++sayTok;
-    try { if (player) player.pause(); if (hasSpeech) speechSynthesis.cancel(); } catch (e) { /* ok */ }
+    stopAll();
     parts = [].concat(parts).filter(Boolean);
     if (!parts.length) return;
     talk(true);
+    let spoke = false;
     for (const p of parts) {
       if (tok !== sayTok) return;
-      if (typeof p === 'string') await tts(p); else await playClip(p.clip);
+      if (typeof p !== 'string') { await playClip(p.clip); continue; }
+      const url = voiceUrl(p);
+      if (url) { await playUrl(url, RATE()); continue; }
+      (window.MYABC_UNRECORDED = window.MYABC_UNRECORDED || []).push(p); // lines with no recording, for testing
+      // Chrome drops speech queued straight after cancel(), so give it a moment first
+      if (!spoke) { spoke = true; await wait(60); if (tok !== sayTok) return; }
+      await tts(p);
     }
     if (tok === sayTok) talk(false);
   }
-  const hush = () => { sayTok++; try { if (player) player.pause(); if (hasSpeech) speechSynthesis.cancel(); } catch (e) { /* ok */ } talk(false); };
+  const hush = () => { sayTok++; stopAll(); talk(false); };
+
+  // Keep every recording on the phone so the app speaks offline too.
+  async function cacheVoice() {
+    if (!Voice.ready || !('caches' in window) || !navigator.onLine) return;
+    try {
+      const cache = await caches.open('myabc-audio');
+      const want = new Set(Object.values(Voice.clips).map(f => new URL('audio/' + f + '.mp3', location.href).href));
+      for (const req of await cache.keys()) if (!want.has(req.url)) cache.delete(req);
+      const have = new Set((await cache.keys()).map(r => r.url));
+      const todo = [...want].filter(u => !have.has(u));
+      let i = 0;
+      const worker = async () => {
+        while (i < todo.length) {
+          const u = todo[i++];
+          try { const r = await fetch(u); if (r.ok) await cache.put(u, r); } catch (e) { return; }
+        }
+      };
+      await Promise.all([worker(), worker(), worker()]);
+    } catch (e) { /* try again next launch */ }
+  }
   const sound = l => (Clips.has('snd-' + l) ? { clip: 'snd-' + l } : null);
 
   let actx = null;
@@ -210,14 +255,14 @@
   const SOUND_ALIKE = { c: ['k', 'q', 's'], k: ['c', 'q'], q: ['c', 'k'], s: ['c', 'z'], z: ['s'], j: ['g'], g: ['j'], i: ['e', 'y'], e: ['i'], u: ['a', 'o', 'y'], y: ['u', 'i', 'w'], w: ['y'], a: ['u'], o: ['u'], f: ['v'], v: ['f'] };
   const startLetters = Object.keys(D.START);
   // The first question of a round sets the scene; after that the prompt is short.
-  const intro = (long, short) => (run.i === 0 ? long : short);
+  const intro = (id, again) => (run.i === 0 ? [LINES.intro[id]].concat(again) : again);
 
   const SECTIONS = [
-    { id: 'letters', name: 'Letters', place: 'The letter tree' },
-    { id: 'numbers', name: 'Numbers', place: 'The number pond' },
-    { id: 'sounds', name: 'Sounds', place: 'The sound bell' },
-    { id: 'words', name: 'Words', place: 'The word house' },
-    { id: 'writing', name: 'Writing', place: 'The big pencil' }
+    { id: 'letters', name: 'Letters' },
+    { id: 'numbers', name: 'Numbers' },
+    { id: 'sounds', name: 'Sounds' },
+    { id: 'words', name: 'Words' },
+    { id: 'writing', name: 'Writing' }
   ];
 
   const GAMES = [
@@ -230,10 +275,10 @@
         let wrong;
         if (lv === 2) wrong = one(D.CONFUSABLE.filter(g => g.includes(t))).filter(x => x !== t);
         else wrong = others(pool, 3, [t]);
-        const again = `Find the letter ${t.toUpperCase()}.`;
+        const again = LINES.findLetter(t.toUpperCase());
         return {
           type: 'pick', key: t, cols: 2, feed: true, again,
-          say: intro(`${N()} is hungry for letters! ${again}`, again),
+          say: intro(this.id, again),
           choices: shuffle([{ html: ltr(t), ok: true }].concat(wrong.map(x => ({ html: ltr(x) }))))
         };
       }
@@ -245,10 +290,10 @@
         const t = choose(this.id + lv, D.LOWER);
         const T = t.toUpperCase();
         const conv = x => (lv === 0 ? x : x.toUpperCase());
-        const again = lv === 0 ? `This is big ${T}. Find little ${T}.` : `This is little ${T}. Find big ${T}.`;
+        const again = lv === 0 ? LINES.bigToLittle(T) : LINES.littleToBig(T);
         return {
           type: 'pick', key: t, cols: 2, again,
-          say: intro(`These letters lost their partners. Can you help ${N()}? ${again}`, again),
+          say: intro(this.id, again),
           stim: `<div class="stim-letter">${esc(lv === 0 ? T : t)}</div>`,
           choices: shuffle([{ html: ltr(conv(t)), ok: true }].concat(others(D.LOWER, 3, [t]).map(x => ({ html: ltr(conv(x)) }))))
         };
@@ -267,10 +312,10 @@
         [t + 1, t - 1, t + 10, t - 10].forEach(x => near.add(x));
         let wrong = shuffle([...near].filter(x => x !== t && x >= lo && x <= hi)).slice(0, 2);
         wrong = wrong.concat(others(pool, 3 - wrong.length, [t, ...wrong]));
-        const again = `Find the number ${t}.`;
+        const again = LINES.findNumber(t);
         return {
           type: 'pick', key: t, cols: 2, feed: true, again,
-          say: intro(`${N()} is hungry for numbers! ${again}`, again),
+          say: intro(this.id, again),
           choices: shuffle([{ html: ltr(t), ok: true }].concat(wrong.map(x => ({ html: ltr(x) }))))
         };
       }
@@ -286,12 +331,12 @@
         const nearby = [t - 2, t - 1, t + 1, t + 2].filter(x => x >= Math.max(1, lo - 1) && x <= hi + 1);
         const wrong = shuffle(nearby).slice(0, lv === 0 ? 2 : 3);
         const e = one(D.COUNTABLES);
-        const again = 'How many? Count them.';
+        const again = LINES.howMany;
         return {
           type: 'pick', key: t, cols: lv === 0 ? 3 : 2, small: true, again,
-          say: intro(`Look what ${N()} found! ${again}`, again),
+          say: intro(this.id, again),
           stim: `<div class="count-box n${t > 10 ? 'big' : 'small'}">${Array(t).fill(`<span>${e}</span>`).join('')}</div>`,
-          after: String(t),
+          after: LINES.number(t),
           choices: [t, ...wrong].sort((a, b) => a - b).map(x => ({ html: ltr(x), ok: x === t }))
         };
       }
@@ -309,12 +354,12 @@
           t = word[word.length - 1];
         }
         const wrong = others(D.LOWER, lv === 0 ? 2 : 3, [t, 'x'].concat(SOUND_ALIKE[t] || []));
-        const again = lv < 2 ? `${word}. What letter does ${word} start with?` : `${word}. What letter is at the end of ${word}?`;
+        const again = lv < 2 ? LINES.startsWithQ(word) : LINES.endsWithQ(word);
         return {
           type: 'pick', key: lv < 2 ? t : word, cols: lv === 0 ? 3 : 2, small: true, again,
-          say: intro(`${N()} found some things. ${again}`, again),
-          stim: `<div class="stim-pic">${emoji}</div>`, stimSay: word,
-          after: [sound(t), lv < 2 ? `${t.toUpperCase()}, for ${word}.` : `${word} ends with ${t.toUpperCase()}.`],
+          say: intro(this.id, again),
+          stim: `<div class="stim-pic">${emoji}</div>`, stimSay: LINES.word(word),
+          after: [sound(t), lv < 2 ? LINES.forWord(t.toUpperCase(), word) : LINES.endsWith(word, t.toUpperCase())],
           choices: shuffle([{ html: ltr(t), ok: true }].concat(wrong.map(x => ({ html: ltr(x) }))))
         };
       }
@@ -327,13 +372,13 @@
         const T = t.toUpperCase();
         const [word, emoji] = one(D.START[t]);
         const wrong = others(startLetters, lv === 0 ? 2 : 3, [t].concat(SOUND_ALIKE[t] || [])).map(l => one(D.START[l]));
-        const again = [`Which one starts with ${T}?`, sound(t)];
+        const again = [LINES.whichStarts(T), sound(t)];
         return {
           type: 'pick', key: t, cols: lv === 0 ? 3 : 2, small: lv === 0, again,
-          say: intro([`${N()} wants something that starts with ${T}.`, sound(t), 'Which one?'], again),
+          say: run.i === 0 ? [LINES.wantStarts(T), sound(t), LINES.whichOne] : again,
           stim: `<div class="stim-letter">${T}<span>${t}</span></div>`,
-          after: `${word} starts with ${T}.`,
-          choices: shuffle([{ html: pic(emoji), ok: true, say: word }].concat(wrong.map(([w, e]) => ({ html: pic(e), say: w }))))
+          after: LINES.startsWith(word, T),
+          choices: shuffle([{ html: pic(emoji), ok: true, say: LINES.word(word) }].concat(wrong.map(([w, e]) => ({ html: pic(e), say: LINES.word(w) }))))
         };
       }
     },
@@ -347,13 +392,13 @@
         if (lv === 1) wrong = shuffle(pool.filter(x => x[0] !== word && (x[0][0] === word[0] || x[0].slice(1) === word.slice(1)))).slice(0, 3);
         const n = lv === 0 ? 2 : 3;
         wrong = wrong.concat(others(pool, n - wrong.length, [pool.find(x => x[0] === word), ...wrong])).filter(x => x[1] !== emoji);
-        const again = 'Read the word. Which picture is it?';
+        const again = LINES.readWord;
         return {
           type: 'pick', key: word, cols: lv === 0 ? 3 : 2, small: lv === 0, again,
-          say: intro(`${N()} can't read these words. Can you help? Which picture is it?`, again),
-          stim: `<div class="stim-word">${esc(word)}</div>`, stimSay: word, stimHelps: true,
-          after: word,
-          choices: shuffle([{ html: pic(emoji), ok: true }].concat(wrong.map(([w, e]) => ({ html: pic(e), say: w }))))
+          say: run.i === 0 ? LINES.intro.readWord : again,
+          stim: `<div class="stim-word">${esc(word)}</div>`, stimSay: LINES.word(word), stimHelps: true,
+          after: LINES.word(word),
+          choices: shuffle([{ html: pic(emoji), ok: true }].concat(wrong.map(([w, e]) => ({ html: pic(e), say: LINES.word(w) }))))
         };
       }
     },
@@ -363,10 +408,10 @@
       make(lv) {
         const t = choose(this.id + lv, D.SIGHT[lv]);
         const pool = D.SIGHT.slice(0, lv + 1).flat();
-        const again = `Find the word: ${t}.`;
+        const again = LINES.findWord(t);
         return {
           type: 'pick', key: t, cols: 2, feed: true, again,
-          say: intro(`${N()} is hungry for words! ${again}`, again),
+          say: intro(this.id, again),
           choices: shuffle([{ html: `<span class="wrd">${esc(t)}</span>`, ok: true }].concat(others(pool, 3, [t]).map(x => ({ html: `<span class="wrd">${esc(x)}</span>` }))))
         };
       }
@@ -378,12 +423,12 @@
         const [word, emoji] = choose(this.id + lv, lv === 2 ? D.LONGER : D.CVC, x => x[0]);
         const letters = word.split('');
         const extra = lv === 0 ? [] : others(D.LOWER, 2, letters);
-        const again = `${word}. Build ${word}.`;
+        const again = LINES.build(word);
         return {
           type: 'build', key: word, again,
-          say: intro(`Oh no, ${N()}'s words fell apart! Help build: ${word}.`, again),
-          stim: `<div class="stim-pic">${emoji}</div>`, stimSay: word,
-          answer: letters, tiles: shuffle(letters.concat(extra)), after: word, letters: true
+          say: intro(this.id, again),
+          stim: `<div class="stim-pic">${emoji}</div>`, stimSay: LINES.word(word),
+          answer: letters, tiles: shuffle(letters.concat(extra)), after: LINES.word(word), letters: true
         };
       }
     },
@@ -396,9 +441,9 @@
         let tiles = shuffle(words);
         if (tiles.join(' ') === s) tiles = tiles.reverse();
         return {
-          type: 'build', key: s, again: s + '.',
-          say: intro(`${N()}'s sentences got mixed up. Put it back: ${s}.`, s + '.'),
-          answer: words, tiles, after: s + '.', letters: false
+          type: 'build', key: s, again: LINES.sentence(s),
+          say: intro(this.id, LINES.sentence(s)),
+          answer: words, tiles, after: LINES.sentence(s), letters: false
         };
       }
     },
@@ -407,8 +452,8 @@
       levels: ['Small letters', 'Capitals'],
       make(lv) {
         const t = choose(this.id + lv, lv === 0 ? D.LOWER : D.UPPER);
-        const again = `Trace the letter ${t.toUpperCase()}.`;
-        return { type: 'trace', key: t, glyphs: [t], again, say: intro(`Help ${N()} learn to write. ${again}`, again) };
+        const again = LINES.traceLetter(t.toUpperCase());
+        return { type: 'trace', key: t, glyphs: [t], again, say: intro(this.id, again) };
       }
     },
     {
@@ -416,8 +461,8 @@
       levels: ['0 to 9'],
       make(lv) {
         const t = choose(this.id + lv, '0123456789'.split(''));
-        const again = `Trace the number ${t}.`;
-        return { type: 'trace', key: t, glyphs: [t], again, say: intro(`Help ${N()} write numbers. ${again}`, again) };
+        const again = LINES.traceNumber(t);
+        return { type: 'trace', key: t, glyphs: [t], again, say: intro(this.id, again) };
       }
     },
     {
@@ -425,8 +470,8 @@
       levels: ['Short words', 'Longer words'],
       make(lv) {
         const [word, emoji] = choose(this.id + lv, lv === 0 ? D.CVC : D.LONGER, x => x[0]);
-        const again = `Write the word ${word}.`;
-        return { type: 'trace', key: word, glyphs: word.split(''), word, emoji, again, say: intro(`Help ${N()} write words. ${again}`, again), after: word };
+        const again = LINES.writeWord(word);
+        return { type: 'trace', key: word, glyphs: word.split(''), word, emoji, again, say: intro(this.id, again), after: LINES.word(word) };
       }
     }
   ];
@@ -525,7 +570,7 @@
     const wake = () => { awake = true; palState('idle'); restSoon(); };
     $app.querySelectorAll('.spot').forEach(s => s.onclick = () => { tap(); wake(); sectionSheet(SECTIONS.find(x => x.id === s.dataset.sec)); });
     $app.querySelector('#palspot').onclick = () => {
-      if (!awake) { wake(); pipTune(); palState('happy', 1400); say(`Hello! I'm ${N()}. Let's play!`); }
+      if (!awake) { wake(); pipTune(); palState('happy', 1400); say(N() === 'Pip' ? LINES.hello : [LINES.hello[0], `I'm ${N()}.`, LINES.hello[2]]); }
       else { tap(); place(); }
     };
     $app.querySelector('#place').onclick = () => { tap(); place(); };
@@ -545,14 +590,14 @@
       </button>`).join('');
     const d = document.createElement('div');
     d.className = 'sheet';
-    d.innerHTML = `<div class="sheet-box sec-${sec.id}"><h3>${esc(sec.place)}</h3><div class="cards">${cards}</div></div>`;
+    d.innerHTML = `<div class="sheet-box sec-${sec.id}"><h3>${esc(LINES.places[sec.id].replace('!', ''))}</h3><div class="cards">${cards}</div></div>`;
     d.onclick = e => {
       const b = e.target.closest('.card');
       if (b) { d.remove(); tap(); startGame(b.dataset.game); }
       else if (!e.target.closest('.sheet-box')) d.remove();
     };
     document.body.appendChild(d);
-    say(sec.place + '!');
+    say(LINES.places[sec.id]);
   }
   const closeSheets = () => document.querySelectorAll('.sheet').forEach(s => s.remove());
 
@@ -761,7 +806,7 @@
         b.disabled = true; b.classList.add('used');
         pos++;
         if (pos === q.answer.length) answered(q);
-        else { tap(); say(q.letters ? (sound(t) || t.toUpperCase()) : t); }
+        else { tap(); say(q.letters ? (sound(t) || LINES.letter(t.toUpperCase())) : LINES.word(t)); }
       } else {
         run.clean = false;
         boop();
@@ -778,7 +823,7 @@
     shell(`
       <div class="prompt">${palBtn()}${q.word ? `<div class="trace-word"><span class="tw-pic">${q.emoji}</span>${q.glyphs.map(g => `<b>${esc(g)}</b>`).join('')}</div>` : ''}</div>
       <div class="pad" style="width:${S}px;height:${S}px">
-        <canvas id="guide"></canvas><canvas id="ink"></canvas>
+        <canvas id="guide"></canvas><canvas id="hint"></canvas><canvas id="ink"></canvas>
       </div>
       <div class="trace-btns">
         <button class="round big" id="clear" aria-label="Rub out">🧽</button>
@@ -786,14 +831,14 @@
       </div>`);
     wireCommon(q);
     const dpr = Math.min(window.devicePixelRatio || 1, 3);
-    const guide = $app.querySelector('#guide'), ink = $app.querySelector('#ink');
-    [guide, ink].forEach(c => { c.width = c.height = S * dpr; c.style.width = c.style.height = S + 'px'; });
-    const gc = guide.getContext('2d'), ic = ink.getContext('2d');
-    gc.scale(dpr, dpr); ic.scale(dpr, dpr);
+    const guide = $app.querySelector('#guide'), hint = $app.querySelector('#hint'), ink = $app.querySelector('#ink');
+    [guide, hint, ink].forEach(c => { c.width = c.height = S * dpr; c.style.width = c.style.height = S + 'px'; });
+    const gc = guide.getContext('2d'), hc = hint.getContext('2d'), ic = ink.getContext('2d');
+    gc.scale(dpr, dpr); hc.scale(dpr, dpr); ic.scale(dpr, dpr);
     const M = 96; // small hidden canvases used to mark the tracing
     const mk = () => { const c = document.createElement('canvas'); c.width = c.height = M; return c.getContext('2d', { willReadFrequently: true }); };
     const maskC = mk(), tolC = mk(), inkC = mk();
-    let gi = 0, glyphPx = null, tolPx = null, glyphCount = 0, busy = false, last = null;
+    let gi = 0, glyphPx = null, tolPx = null, shape = null, nudged = false, busy = false, last = null;
     const id = run.id;
 
     function drawGlyph(ctx, size, ch, stroke) {
@@ -811,6 +856,8 @@
       gc.clearRect(0, 0, S, S);
       ic.clearRect(0, 0, S, S);
       inkC.clearRect(0, 0, M, M);
+      hc.clearRect(0, 0, S, S);
+      nudged = false;
       const fs = S * 0.62;
       gc.font = FONT(fs);
       const xh = gc.measureText('x').actualBoundingBoxAscent || fs * 0.5;
@@ -829,9 +876,8 @@
       drawGlyph(tolC, M, ch, M * 0.2);
       glyphPx = maskC.getImageData(0, 0, M, M).data;
       tolPx = tolC.getImageData(0, 0, M, M).data;
-      glyphCount = 0;
-      for (let i = 3; i < glyphPx.length; i += 4) if (glyphPx[i] > 100) glyphCount++;
-      window.MYABC_TRACE = { M, S, glyphPx };
+      shape = TRACE.analyse(glyphPx, M);
+      window.MYABC_TRACE = { M, S, glyphPx, shape, ch };
       $app.querySelectorAll('.trace-word b').forEach((b, k) => { b.className = k < gi ? 'done' : k === gi ? 'now' : ''; });
     }
 
@@ -839,7 +885,7 @@
       ic.strokeStyle = '#3B3A6B'; ic.lineCap = ic.lineJoin = 'round'; ic.lineWidth = S * 0.085;
       ic.beginPath(); ic.moveTo(a.x, a.y); ic.lineTo(b.x, b.y); ic.stroke();
       const k = M / S;
-      inkC.strokeStyle = '#000'; inkC.lineCap = inkC.lineJoin = 'round'; inkC.lineWidth = M * 0.1;
+      inkC.strokeStyle = '#000'; inkC.lineCap = inkC.lineJoin = 'round'; inkC.lineWidth = M * 0.072;
       inkC.beginPath(); inkC.moveTo(a.x * k, a.y * k); inkC.lineTo(b.x * k, b.y * k); inkC.stroke();
     }
     function dot(p) { // a tap leaves a dot, so i and j can be finished
@@ -847,18 +893,34 @@
       ic.fillStyle = '#3B3A6B';
       ic.beginPath(); ic.arc(p.x, p.y, S * 0.0425, 0, 7); ic.fill();
       inkC.fillStyle = '#000';
-      inkC.beginPath(); inkC.arc(p.x * k, p.y * k, M * 0.05, 0, 7); inkC.fill();
+      inkC.beginPath(); inkC.arc(p.x * k, p.y * k, M * 0.036, 0, 7); inkC.fill();
+    }
+
+    // The parts still to trace glow, once most of the letter is done.
+    function showHint(r) {
+      hc.clearRect(0, 0, S, S);
+      const k = S / M, pad = 1.5;
+      if (r.missing.length) {
+        hc.save();
+        hc.beginPath();
+        r.missing.forEach(n => { const [x0, y0, x1, y1] = shape.regions[n].box; hc.rect((x0 - pad) * k, (y0 - pad) * k, (x1 - x0 + 2 * pad) * k, (y1 - y0 + 2 * pad) * k); });
+        hc.clip();
+        hc.fillStyle = '#C084FC';
+        drawGlyph(hc, S, q.glyphs[gi]);
+        hc.restore();
+      }
+      hc.fillStyle = 'rgba(168, 85, 247, .55)';
+      r.missingPts.forEach(n => { const p = shape.points[n]; hc.beginPath(); hc.arc((p.x + 0.5) * k, (p.y + 0.5) * k, S * 0.05, 0, 7); hc.fill(); });
     }
 
     function check() {
-      const px = inkC.getImageData(0, 0, M, M).data;
-      let hit = 0, inkN = 0, stray = 0;
-      for (let i = 3; i < px.length; i += 4) {
-        const on = px[i] > 100;
-        if (on) { inkN++; if (tolPx[i] < 100) stray++; }
-        if (on && glyphPx[i] > 100) hit++;
+      const r = TRACE.judge(shape, inkC.getImageData(0, 0, M, M).data, tolPx);
+      if (r.pass) { hc.clearRect(0, 0, S, S); return true; }
+      if (r.strayOk && r.total >= 0.5) {
+        showHint(r);
+        if (!nudged && (r.missing.length || r.missingPts.length)) { nudged = true; say(LINES.nearly); }
       }
-      return inkN > 0 && hit / glyphCount >= 0.7 && stray / inkN <= 0.35;
+      return false;
     }
 
     async function passed() {
@@ -893,7 +955,7 @@
       last = null;
       if (!busy && check()) passed();
     };
-    $app.querySelector('#clear').onclick = () => { if (!busy) { ic.clearRect(0, 0, S, S); inkC.clearRect(0, 0, M, M); } };
+    $app.querySelector('#clear').onclick = () => { if (!busy) { ic.clearRect(0, 0, S, S); inkC.clearRect(0, 0, M, M); hc.clearRect(0, 0, S, S); } };
     $app.querySelector('#skip').onclick = () => {
       if (busy) return;
       run.clean = false;
@@ -915,13 +977,13 @@
     const n = store.stickers.length + p.hats.length + p.colors.length - 1; // rewards so far
     const hatsLeft = PAL.HATS.filter(h => !p.hats.includes(h));
     const colsLeft = Object.keys(PAL.COLORS).filter(c => !p.colors.includes(c));
-    if (n % 5 === 1 && hatsLeft.length) { const h = hatsLeft[0]; p.hats.push(h); p.hat = h; return { type: 'hat', label: `A new hat for ${N()}!`, line: 'I got a new hat!' }; }
-    if (n % 5 === 3 && colsLeft.length) { const c = colsLeft[0]; p.colors.push(c); return { type: 'color', c, label: `A new colour for ${N()}!`, line: 'I can change colour now!' }; }
+    if (n % 5 === 1 && hatsLeft.length) { const h = hatsLeft[0]; p.hats.push(h); p.hat = h; return { type: 'hat', label: `A new hat for ${N()}!`, line: LINES.reward.hat }; }
+    if (n % 5 === 3 && colsLeft.length) { const c = colsLeft[0]; p.colors.push(c); return { type: 'color', c, label: `A new colour for ${N()}!`, line: LINES.reward.color }; }
     const have = store.stickers.map(s => s.e);
     const fresh = D.STICKERS.filter(s => !have.includes(s));
     const e = one(fresh.length ? fresh : D.STICKERS);
     store.stickers.push(Object.assign({ e }, freeSpot()));
-    return { type: 'sticker', e, label: 'New sticker!', line: 'A new sticker for my place!' };
+    return { type: 'sticker', e, label: 'New sticker!', line: LINES.reward.sticker };
   }
 
   function finish() {
@@ -959,7 +1021,7 @@
       </div>`;
     fanfare();
     confetti();
-    say([Clips.has('finish') ? { clip: 'finish' } : 'You did it!', r.line]);
+    say([Clips.has('finish') ? { clip: 'finish' } : LINES.finished, r.line]);
     $app.querySelector('#again').onclick = () => { history.replaceState(null, ''); startGame(g.id); };
     $app.querySelector('#homeb').onclick = goHome;
     $app.querySelector('#toplace').onclick = () => { history.replaceState(null, ''); place(); };
@@ -969,7 +1031,7 @@
      The app is a page that can stay open for days, so it checks GitHub itself:
      on launch, whenever it comes back to the front, and from the grown-ups page.
      It fingerprints its own files; if they changed, it reloads at the next quiet moment. */
-  const APP_FILES = ['index.html', 'css/style.css', 'js/data.js', 'js/pal.js', 'js/app.js', 'sw.js'];
+  const APP_FILES = ['index.html', 'css/style.css', 'js/data.js', 'js/pal.js', 'js/lines.js', 'js/trace.js', 'js/app.js', 'sw.js', 'audio/index.json'];
   let loadedPrint = null, updateReady = false, lastCheck = 0;
   async function fingerprint() {
     let h = 5381;
@@ -1055,7 +1117,7 @@
         </div>
         ${rows}
         <button id="reset" class="danger">Reset all progress</button>
-        ${hasSpeech ? '' : '<p class="g-intro">This browser has no speech voice, so the games will be silent.</p>'}
+        <p class="g-intro">${Voice.ready ? `Pip's voice: built-in recordings (${Object.keys(Voice.clips).length} lines), so no phone voice is needed.` : (hasSpeech ? "Pip's voice: recordings not loaded yet, using this phone's voice for now." : "Pip's voice: recordings not loaded yet, and this browser has no voice of its own.")}</p>
       </div>`;
     $app.querySelector('#x').onclick = goHome;
     $app.querySelectorAll('.g-levels button').forEach(b => b.onclick = () => {
@@ -1065,7 +1127,7 @@
     const rerender = () => { history.replaceState(null, ''); grownups(); };
     $app.querySelector('#pname').onchange = e => { store.pal.name = e.target.value.trim().slice(0, 12) || 'Pip'; save(); };
     $app.querySelector('#voice').onclick = () => { history.replaceState(null, ''); voiceScreen(); };
-    $app.querySelector('#rate').onclick = () => { const r = store.settings.rate; store.settings.rate = r < 0.8 ? 0.85 : r < 0.95 ? 1 : 0.7; save(); rerender(); say('This is how fast I talk.'); };
+    $app.querySelector('#rate').onclick = () => { const r = store.settings.rate; store.settings.rate = r < 0.8 ? 0.85 : r < 0.95 ? 1 : 0.7; save(); rerender(); say(LINES.speedTest); };
     $app.querySelector('#sfx').onclick = () => { store.settings.sfx = !store.settings.sfx; save(); rerender(); };
     $app.querySelector('#update').onclick = async e => {
       const b = e.currentTarget;
@@ -1163,5 +1225,6 @@
   }
 
   // Recordings load before the first screen so they are ready for the first game.
-  Promise.race([Clips.ready, wait(1200)]).then(home);
+  Promise.race([Promise.all([Clips.ready, Voice.load]), wait(1500)]).then(home);
+  Voice.load.then(() => setTimeout(cacheVoice, 4000));
 })();

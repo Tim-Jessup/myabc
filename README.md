@@ -49,8 +49,14 @@ Hold the ⚙ on the home screen. It shows first-go scores and tricky items for e
 
 Levels also adjust themselves: two strong rounds in a row moves up, a hard round moves back.
 
+## Pip's voice
+
+Everything Pip says is a real recording in `audio/` (one MP3 per line, about 900 of them), made with the open-source [Kokoro](https://huggingface.co/hexgrad/Kokoro-82M) voice model (Apache-2.0). So the app sounds the same on every phone and browser and works offline, with no dependence on the phone's own text-to-speech. The phone's voice is only used as a fallback for a line that has no recording (for example if you rename Pip).
+
+If you add or change lines in `js/lines.js` or words in `js/data.js`, run `tools/make_voice.py` to record the new lines (see the notes at the top of that file).
+
 ## Changing the content
 
-Word lists, pictures, and sentences are all in `js/data.js`. Pip is drawn in `js/pal.js`. Game logic is in `js/app.js`. No build step.
+Word lists, pictures, and sentences are all in `js/data.js`. Everything Pip says is in `js/lines.js`. Pip is drawn in `js/pal.js`, tracing is marked in `js/trace.js`, and the rest of the game logic is in `js/app.js`. No build step.
 
-Speech uses the phone's own text-to-speech voice. The Andika font is by SIL International (OFL, see `fonts/`).
+The Andika font is by SIL International (OFL, see `fonts/`).
