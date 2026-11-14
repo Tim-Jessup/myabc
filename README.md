@@ -10,7 +10,7 @@ Reading and writing games for little learners. A small installable web app: no a
 2. A minute later, open the link above in Chrome on the phone.
 3. Chrome menu (⋮) → **Add to Home screen → Install**.
 
-Updates pushed to `main` appear the next time the app is opened with a connection.
+The app checks for a new version when it opens and whenever it comes back to the front, and reloads itself on the home screen. There is also a **Check for updates** button on the grown-ups page.
 
 ## The games
 

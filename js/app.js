@@ -535,6 +535,7 @@
     g.onpointerup = g.onpointerleave = () => { if (timer) { clearTimeout(timer); timer = null; } };
     g.oncontextmenu = e => e.preventDefault();
     if (awake) restSoon();
+    if (updateReady) applyUpdate(); else autoUpdate();
   }
 
   function sectionSheet(sec) {
@@ -964,6 +965,49 @@
     $app.querySelector('#toplace').onclick = () => { history.replaceState(null, ''); place(); };
   }
 
+  /* ---------- updates ----------
+     The app is a page that can stay open for days, so it checks GitHub itself:
+     on launch, whenever it comes back to the front, and from the grown-ups page.
+     It fingerprints its own files; if they changed, it reloads at the next quiet moment. */
+  const APP_FILES = ['index.html', 'css/style.css', 'js/data.js', 'js/pal.js', 'js/app.js', 'sw.js'];
+  let loadedPrint = null, updateReady = false, lastCheck = 0;
+  async function fingerprint() {
+    let h = 5381;
+    for (const f of APP_FILES) {
+      const r = await fetch(f + '?_=' + Date.now(), { cache: 'no-store' });
+      if (!r.ok) throw new Error('offline');
+      const t = await r.text();
+      for (let i = 0; i < t.length; i++) h = ((h << 5) + h + t.charCodeAt(i)) | 0;
+    }
+    return (h >>> 0).toString(36);
+  }
+  // Returns 'same', 'new' or 'offline'.
+  async function checkUpdate(force) {
+    if (!force && Date.now() - lastCheck < 60 * 1000) return updateReady ? 'new' : 'same';
+    lastCheck = Date.now();
+    try {
+      const now = await fingerprint();
+      if (loadedPrint === null) { loadedPrint = now; return 'same'; }
+      if (now === loadedPrint) return 'same';
+      if (navigator.serviceWorker && navigator.serviceWorker.getRegistration) {
+        const reg = await navigator.serviceWorker.getRegistration();
+        if (reg) await reg.update().catch(() => {});
+      }
+      updateReady = true;
+      return 'new';
+    } catch (e) { lastCheck = 0; return 'offline'; }
+  }
+  function applyUpdate() {
+    // one reload per new version, so a hiccup can never cause a reload loop
+    try { if (sessionStorage.getItem('myabc.reloads') >= 3) return; sessionStorage.setItem('myabc.reloads', (+sessionStorage.getItem('myabc.reloads') || 0) + 1); } catch (e) { /* ok */ }
+    location.reload();
+  }
+  const quiet = () => !!document.querySelector('.world-screen') && !document.querySelector('.sheet');
+  async function autoUpdate() {
+    if (await checkUpdate(false) === 'new' && quiet()) applyUpdate();
+  }
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') autoUpdate(); });
+
   /* ---------- grown-ups ---------- */
   function tricky(id) {
     return Object.entries(store.items)
@@ -1007,6 +1051,7 @@
           <button id="rate">Voice speed: <b>${store.settings.rate < 0.8 ? 'slow' : store.settings.rate < 0.95 ? 'gentle' : 'normal'}</b></button>
           <button id="sfx">Sounds: <b>${store.settings.sfx ? 'on' : 'off'}</b></button>
           <button id="copy">Copy progress summary</button>
+          <button id="update">Check for updates${loadedPrint ? ` <span class="ver">(version ${loadedPrint})</span>` : ''}</button>
         </div>
         ${rows}
         <button id="reset" class="danger">Reset all progress</button>
@@ -1022,6 +1067,13 @@
     $app.querySelector('#voice').onclick = () => { history.replaceState(null, ''); voiceScreen(); };
     $app.querySelector('#rate').onclick = () => { const r = store.settings.rate; store.settings.rate = r < 0.8 ? 0.85 : r < 0.95 ? 1 : 0.7; save(); rerender(); say('This is how fast I talk.'); };
     $app.querySelector('#sfx').onclick = () => { store.settings.sfx = !store.settings.sfx; save(); rerender(); };
+    $app.querySelector('#update').onclick = async e => {
+      const b = e.currentTarget;
+      b.textContent = 'Checking…';
+      const r = await checkUpdate(true);
+      if (r === 'new') { b.textContent = 'Updating…'; await wait(400); applyUpdate(); }
+      else b.textContent = r === 'offline' ? 'No connection. Try again later.' : `Up to date (version ${loadedPrint})`;
+    };
     $app.querySelector('#copy').onclick = async e => {
       const text = summaryText();
       try { await navigator.clipboard.writeText(text); e.target.textContent = 'Copied!'; }

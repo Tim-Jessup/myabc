@@ -234,3 +234,5 @@ h1, h2, h3, p { margin: 0; }
 .v-btns button:disabled { opacity: .4; }
 #v-rec { color: #C2410C; border-color: #F3B5A7; }
 #v-rec.live { background: #C2410C; color: #fff; border-color: #C2410C; }
+
+.ver { color: var(--soft); font-size: 13px; }

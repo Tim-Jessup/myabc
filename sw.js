@@ -1,6 +1,6 @@
 // Network-first so updates pushed to GitHub show up straight away;
 // falls back to the cache so the app still works offline.
-const CACHE = 'myabc-v2';
+const CACHE = 'myabc-v3';
 const CORE = [
   './', 'index.html', 'css/style.css', 'js/data.js', 'js/pal.js', 'js/app.js',
   'manifest.webmanifest', 'fonts/andika-400.woff2', 'fonts/andika-700.woff2',
@@ -26,10 +26,10 @@ self.addEventListener('fetch', e => {
     const cache = await caches.open(CACHE);
     try {
       const fresh = await Promise.race([
-        fetch(req),
+        fetch(req.url, { cache: 'no-cache', credentials: 'same-origin' }), // skip the browser's own 10-minute cache
         new Promise((_, rej) => setTimeout(() => rej(new Error('slow')), 3500))
       ]);
-      if (fresh && fresh.ok) cache.put(req, fresh.clone());
+      if (fresh && fresh.ok) cache.put(req.url.split('?')[0], fresh.clone()); // one entry per file, whatever the query
       return fresh;
     } catch (err) {
       const hit = await cache.match(req, { ignoreSearch: true });
