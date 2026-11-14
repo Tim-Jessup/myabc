@@ -17,9 +17,30 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 AUDIO = os.path.join(ROOT, 'audio')
 
 # Letters are said by name. Spelling the names out stops the model reading "A" as "uh".
-NAMES = dict(A='ay', B='bee', C='see', D='dee', E='ee', F='eff', G='jee', H='aitch', I='eye', J='jay',
+NAMES = dict(A='eigh', B='bee', C='see', D='dee', E='ee', F='ef', G='jee', H='aitch', I='eye', J='jay',
              K='kay', L='ell', M='em', N='en', O='oh', P='pee', Q='cue', R='are', S='ess', T='tee',
              U='you', V='vee', W='double you', X='ex', Y='why', Z='zed')
+
+
+# How each letter name must come out (IPA, stress marks removed). Checked before recording,
+# because the model reads some spellings oddly ("eff" came out as "E-F-F", "ay" as "eye").
+EXPECT = dict(A='eɪ', B='biː', C='siː', D='diː', E='iː', F='ɛf', G='dʒiː', H='eɪtʃ', I='aɪ', J='dʒeɪ',
+              K='keɪ', L='ɛl', M='ɛm', N='ɛn', O='oʊ', P='piː', Q='kjuː', R='ɑːɹ', S='ɛs', T='tiː',
+              U='juː', V='viː', W='dʌbəl juː', X='ɛks', Y='waɪ', Z='zɛd')
+
+
+def check_names(model, voices, lang):
+    import warnings; warnings.filterwarnings('ignore')
+    from kokoro_onnx import Kokoro
+    k = Kokoro(model, voices)
+    bad = []
+    for L, name in NAMES.items():
+        for text in (name + '.', f'Find the letter {name}.'):
+            got = k.tokenizer.phonemize(text, lang).replace('ˈ', '').replace('ˌ', '').rstrip('.').strip()
+            if not got.endswith(' ' + EXPECT[L]) and got != EXPECT[L]:
+                bad.append(f'{L}: {text!r} -> {got!r} (want ...{EXPECT[L]})')
+    if bad:
+        sys.exit('Letter names would be mispronounced:\n  ' + '\n  '.join(bad))
 
 
 def list_lines():
@@ -73,6 +94,7 @@ def main():
     args = ap.parse_args()
     lang = 'en-gb' if args.voice.startswith('b') else 'en-us'
     os.makedirs(AUDIO, exist_ok=True)
+    check_names(args.model, args.voices, lang)
 
     clips, jobs = {}, []
     for key, line in list_lines():

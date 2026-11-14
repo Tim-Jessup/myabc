@@ -885,7 +885,7 @@
       ic.strokeStyle = '#3B3A6B'; ic.lineCap = ic.lineJoin = 'round'; ic.lineWidth = S * 0.085;
       ic.beginPath(); ic.moveTo(a.x, a.y); ic.lineTo(b.x, b.y); ic.stroke();
       const k = M / S;
-      inkC.strokeStyle = '#000'; inkC.lineCap = inkC.lineJoin = 'round'; inkC.lineWidth = M * 0.072;
+      inkC.strokeStyle = '#000'; inkC.lineCap = inkC.lineJoin = 'round'; inkC.lineWidth = 2; // the path of her finger
       inkC.beginPath(); inkC.moveTo(a.x * k, a.y * k); inkC.lineTo(b.x * k, b.y * k); inkC.stroke();
     }
     function dot(p) { // a tap leaves a dot, so i and j can be finished
@@ -893,32 +893,24 @@
       ic.fillStyle = '#3B3A6B';
       ic.beginPath(); ic.arc(p.x, p.y, S * 0.0425, 0, 7); ic.fill();
       inkC.fillStyle = '#000';
-      inkC.beginPath(); inkC.arc(p.x * k, p.y * k, M * 0.036, 0, 7); inkC.fill();
+      inkC.beginPath(); inkC.arc(p.x * k, p.y * k, 1.2, 0, 7); inkC.fill();
     }
 
     // The parts still to trace glow, once most of the letter is done.
+    // The parts still to trace glow, once she has made a good start.
     function showHint(r) {
       hc.clearRect(0, 0, S, S);
-      const k = S / M, pad = 1.5;
-      if (r.missing.length) {
-        hc.save();
-        hc.beginPath();
-        r.missing.forEach(n => { const [x0, y0, x1, y1] = shape.regions[n].box; hc.rect((x0 - pad) * k, (y0 - pad) * k, (x1 - x0 + 2 * pad) * k, (y1 - y0 + 2 * pad) * k); });
-        hc.clip();
-        hc.fillStyle = '#C084FC';
-        drawGlyph(hc, S, q.glyphs[gi]);
-        hc.restore();
-      }
+      const k = S / M;
       hc.fillStyle = 'rgba(168, 85, 247, .55)';
-      r.missingPts.forEach(n => { const p = shape.points[n]; hc.beginPath(); hc.arc((p.x + 0.5) * k, (p.y + 0.5) * k, S * 0.05, 0, 7); hc.fill(); });
+      r.unreached.forEach(p => { hc.beginPath(); hc.arc((p.x + 0.5) * k, (p.y + 0.5) * k, S * 0.055, 0, 7); hc.fill(); });
     }
 
     function check() {
       const r = TRACE.judge(shape, inkC.getImageData(0, 0, M, M).data, tolPx);
       if (r.pass) { hc.clearRect(0, 0, S, S); return true; }
-      if (r.strayOk && r.total >= 0.5) {
+      if (r.strayOk && r.progress >= 0.5) {
         showHint(r);
-        if (!nudged && (r.missing.length || r.missingPts.length)) { nudged = true; say(LINES.nearly); }
+        if (!nudged && r.missing.length) { nudged = true; say(LINES.nearly); }
       }
       return false;
     }
