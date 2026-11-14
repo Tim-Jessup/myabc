@@ -1,8 +1,8 @@
 // Network-first so updates pushed to GitHub show up straight away;
 // falls back to the cache so the app still works offline.
-const CACHE = 'myabc-v1';
+const CACHE = 'myabc-v2';
 const CORE = [
-  './', 'index.html', 'css/style.css', 'js/data.js', 'js/app.js',
+  './', 'index.html', 'css/style.css', 'js/data.js', 'js/pal.js', 'js/app.js',
   'manifest.webmanifest', 'fonts/andika-400.woff2', 'fonts/andika-700.woff2',
   'icons/icon-192.png', 'icons/icon-512.png'
 ];

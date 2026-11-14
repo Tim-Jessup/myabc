@@ -78,7 +78,9 @@ const DATA = (() => {
     '🐸', '🐧', '🦜', '🐳', '🦖', '🐞', '🌈', '🚀', '🍉', '🍦', '🎈', '⭐', '🌻', '🍓',
     '🧸', '🎨', '🚂', '🏰', '🦩', '🐿️', '🦔', '🐠', '🪁', '🌙'];
 
-  const PRAISE = ['Yes!', 'Great!', 'You got it!', 'Well done!', 'Nice one!', 'Super!'];
+  // What the friend says after a right answer. YUM is for the games where it eats the answer.
+  const PRAISE = ['Thank you!', 'You did it!', 'Great helping!', 'Yes!', 'Well done!', 'You got it!'];
+  const YUM = ['Yum!', 'Yum yum!', 'Delicious!', 'More please!', 'Tasty!'];
 
-  return { UPPER, LOWER, CONFUSABLE, START, CVC, LONGER, SIGHT, SENTENCES, COUNTABLES, STICKERS, PRAISE };
+  return { UPPER, LOWER, CONFUSABLE, START, CVC, LONGER, SIGHT, SENTENCES, COUNTABLES, STICKERS, PRAISE, YUM };
 })();

@@ -30,7 +30,18 @@ Updates pushed to `main` appear the next time the app is opened with a connectio
 | Writing | Trace numbers | 0–9 |
 | Writing | Write words | short words, longer words |
 
-Each round ends with a sticker. Wrong answers just fade out; there is no "fail".
+Wrong answers just fade out; there is no "fail".
+
+## Pip the platypus
+
+- Pip lives on the home screen, which is a little world: the letter tree, number pond, sound bell, word house and big pencil each open a set of games. Tap Pip to wake it up.
+- The games are framed as helping Pip: feeding it letters, numbers and words, rebuilding words that fell apart, sorting out mixed-up sentences.
+- Each finished round wins something for Pip's place: stickers she can drag around the yard, and now and then a new hat or colour for Pip.
+- Pip's name can be changed on the grown-ups page.
+
+## Your voice
+
+Grown-ups page → **Record your voice**. You can record the 26 letter sounds, up to six praise clips, and a "round finished" cheer. Recordings are stored on the phone only (never in this repo, never uploaded). Recorded letter sounds are used when building words and matching sounds; praise clips replace the built-in "Yes!" lines.
 
 ## Grown-ups page
 
@@ -40,6 +51,6 @@ Levels also adjust themselves: two strong rounds in a row moves up, a hard round
 
 ## Changing the content
 
-Word lists, pictures, and sentences are all in `js/data.js`. Game logic is in `js/app.js`. No build step.
+Word lists, pictures, and sentences are all in `js/data.js`. Pip is drawn in `js/pal.js`. Game logic is in `js/app.js`. No build step.
 
 Speech uses the phone's own text-to-speech voice. The Andika font is by SIL International (OFL, see `fonts/`).

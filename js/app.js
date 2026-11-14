@@ -5,14 +5,13 @@
 
   /* ---------- storage ---------- */
   const KEY = 'myabc.v1';
-  const store = { games: {}, items: {}, stickers: [], settings: { rate: 0.85, sfx: true } };
+  const store = { games: {}, items: {}, stickers: [], settings: { rate: 0.85, sfx: true }, pal: {} };
   try {
     const saved = JSON.parse(localStorage.getItem(KEY) || 'null');
-    if (saved) {
-      Object.assign(store, saved);
-      store.settings = Object.assign({ rate: 0.85, sfx: true }, saved.settings || {});
-    }
+    if (saved) Object.assign(store, saved);
   } catch (e) { /* start fresh */ }
+  store.settings = Object.assign({ rate: 0.85, sfx: true }, store.settings || {});
+  store.pal = Object.assign({ name: 'Pip', color: 'brown', hat: null, hats: [], colors: ['brown'] }, store.pal || {});
   const save = () => { try { localStorage.setItem(KEY, JSON.stringify(store)); } catch (e) { /* full or private mode */ } };
 
   /* ---------- helpers ---------- */
@@ -20,8 +19,54 @@
   const one = a => a[rnd(a.length)];
   const shuffle = a => { a = a.slice(); for (let i = a.length - 1; i > 0; i--) { const j = rnd(i + 1); [a[i], a[j]] = [a[j], a[i]]; } return a; };
   const wait = ms => new Promise(r => setTimeout(r, ms));
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
   const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   const others = (pool, n, bad) => shuffle(pool.filter(x => !bad.includes(x))).slice(0, n);
+  const N = () => store.pal.name || 'Pip';
+
+  // Stickers used to be plain emoji; now each one has a spot in the yard.
+  const freeSpot = () => {
+    for (let k = 0; k < 30; k++) {
+      const x = 0.08 + Math.random() * 0.84, y = 0.1 + Math.random() * 0.8;
+      if (Math.abs(x - 0.5) > 0.24 || Math.abs(y - 0.56) > 0.27) return { x, y };
+    }
+    return { x: 0.1, y: 0.15 };
+  };
+  store.stickers = (store.stickers || []).map(s => (typeof s === 'string' ? Object.assign({ e: s }, freeSpot()) : s));
+
+  /* ---------- recorded voice clips (kept on this phone only) ---------- */
+  const Clips = (() => {
+    let db = null;
+    const urls = {};
+    const open = () => new Promise((res, rej) => {
+      const r = indexedDB.open('myabc', 1);
+      r.onupgradeneeded = () => r.result.createObjectStore('clips');
+      r.onsuccess = () => res(r.result);
+      r.onerror = () => rej(r.error);
+    });
+    const ready = (async () => {
+      try {
+        db = await open();
+        await new Promise(res => {
+          const rq = db.transaction('clips').objectStore('clips').openCursor();
+          rq.onsuccess = () => { const c = rq.result; if (c) { urls[c.key] = URL.createObjectURL(c.value); c.continue(); } else res(); };
+          rq.onerror = () => res();
+        });
+      } catch (e) { /* no storage: recordings unavailable */ }
+    })();
+    const write = fn => new Promise(res => {
+      if (!db) return res();
+      try { const tx = db.transaction('clips', 'readwrite'); fn(tx.objectStore('clips')); tx.oncomplete = tx.onerror = () => res(); } catch (e) { res(); }
+    });
+    return {
+      ready,
+      has: id => !!urls[id],
+      ids: () => Object.keys(urls),
+      put(id, blob) { if (urls[id]) URL.revokeObjectURL(urls[id]); urls[id] = URL.createObjectURL(blob); return write(s => s.put(blob, id)); },
+      del(id) { if (urls[id]) URL.revokeObjectURL(urls[id]); delete urls[id]; return write(s => s.delete(id)); },
+      url: id => urls[id]
+    };
+  })();
 
   /* ---------- speech + sound ---------- */
   let voice = null;
@@ -36,13 +81,12 @@
   }
   if (hasSpeech) { pickVoice(); speechSynthesis.addEventListener('voiceschanged', pickVoice); }
 
-  function say(text) {
+  function tts(text) {
     return new Promise(res => {
       if (!hasSpeech || !text) return res();
       let done = false;
       const fin = () => { if (!done) { done = true; res(); } };
       try {
-        speechSynthesis.cancel();
         const u = new SpeechSynthesisUtterance(text);
         if (voice) { u.voice = voice; u.lang = voice.lang; } else u.lang = 'en-AU';
         u.rate = store.settings.rate;
@@ -52,6 +96,39 @@
       setTimeout(fin, 1500 + text.length * 120); // never hang if the phone stays silent
     });
   }
+  let player = null;
+  function playClip(id) {
+    return new Promise(res => {
+      const url = Clips.url(id);
+      if (!url) return res();
+      let done = false;
+      const fin = () => { if (!done) { done = true; res(); } };
+      try {
+        player = new Audio(url);
+        player.onended = fin; player.onerror = fin;
+        player.play().catch(fin);
+      } catch (e) { fin(); }
+      setTimeout(fin, 6000);
+    });
+  }
+  const talk = on => document.querySelectorAll('.pal').forEach(p => p.classList.toggle('talk', on));
+
+  // say('text'), say({clip:'snd-b'}) or a list of both, played in order.
+  let sayTok = 0;
+  async function say(parts) {
+    const tok = ++sayTok;
+    try { if (player) player.pause(); if (hasSpeech) speechSynthesis.cancel(); } catch (e) { /* ok */ }
+    parts = [].concat(parts).filter(Boolean);
+    if (!parts.length) return;
+    talk(true);
+    for (const p of parts) {
+      if (tok !== sayTok) return;
+      if (typeof p === 'string') await tts(p); else await playClip(p.clip);
+    }
+    if (tok === sayTok) talk(false);
+  }
+  const hush = () => { sayTok++; try { if (player) player.pause(); if (hasSpeech) speechSynthesis.cancel(); } catch (e) { /* ok */ } talk(false); };
+  const sound = l => (Clips.has('snd-' + l) ? { clip: 'snd-' + l } : null);
 
   let actx = null;
   function tone(freqs, dur = 0.13, type = 'sine', vol = 0.18) {
@@ -60,6 +137,7 @@
       actx = actx || new (window.AudioContext || window.webkitAudioContext)();
       if (actx.state === 'suspended') actx.resume();
       freqs.forEach((f, i) => {
+        if (!f) return;
         const o = actx.createOscillator(), g = actx.createGain();
         const t = actx.currentTime + i * dur * 0.9;
         o.type = type; o.frequency.value = f;
@@ -74,7 +152,43 @@
   const chime = () => tone([660, 880]);
   const boop = () => tone([220], 0.12, 'triangle', 0.12);
   const tap = () => tone([520], 0.05, 'sine', 0.08);
+  const chomp = () => tone([180, 0, 150], 0.07, 'square', 0.06);
   const fanfare = () => tone([523, 659, 784, 1047], 0.16);
+  const pipTune = () => tone([392, 523, 494, 587, 784], 0.14, 'triangle', 0.16); // Pip's little hello
+
+  /* ---------- the friend ---------- */
+  let palTimer = null;
+  function palState(s, ms) {
+    clearTimeout(palTimer);
+    document.querySelectorAll('.pal').forEach(p => { p.dataset.s = s; });
+    if (ms) palTimer = setTimeout(() => document.querySelectorAll('.pal').forEach(p => { p.dataset.s = 'idle'; }), ms);
+  }
+  const palBtn = (state = 'idle') => `<button class="palbtn" id="speak" aria-label="Hear it again">${PAL.svg(store.pal, state)}<i>🔊</i></button>`;
+
+  function flyTo(el, target) {
+    if (!el || !target || !el.animate) return Promise.resolve();
+    const a = el.getBoundingClientRect(), b = target.getBoundingClientRect();
+    const c = el.cloneNode(true);
+    Object.assign(c.style, { position: 'fixed', left: a.left + 'px', top: a.top + 'px', width: a.width + 'px', height: a.height + 'px', margin: 0, zIndex: 20, pointerEvents: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center' });
+    c.classList.add('flying');
+    document.body.appendChild(c);
+    const dx = b.left + b.width / 2 - (a.left + a.width / 2), dy = b.top + b.height * 0.55 - (a.top + a.height / 2);
+    const an = c.animate([{ transform: 'translate(0,0) scale(1)' }, { transform: `translate(${dx}px,${dy}px) scale(.12)` }], { duration: 420, easing: 'cubic-bezier(.5,0,.9,.5)' });
+    return new Promise(res => { const end = () => { c.remove(); res(); }; an.onfinish = end; an.oncancel = end; setTimeout(end, 600); });
+  }
+
+  function confetti() {
+    const box = document.createElement('div');
+    box.className = 'confetti';
+    const cols = ['#FF6B4A', '#F5A300', '#14B8A6', '#4F6FF5', '#A855F7', '#FFC531'];
+    for (let i = 0; i < 46; i++) {
+      const s = document.createElement('i');
+      s.style.cssText = `left:${Math.random() * 100}%;background:${one(cols)};animation-delay:${Math.random() * 0.5}s;animation-duration:${1.6 + Math.random() * 1.2}s;width:${8 + rnd(8)}px;height:${10 + rnd(10)}px`;
+      box.appendChild(s);
+    }
+    document.body.appendChild(box);
+    setTimeout(() => box.remove(), 3400);
+  }
 
   /* ---------- item picking (things she finds tricky come back more often) ---------- */
   const itemStat = (id, key) => store.items[id + '|' + key] || [0, 0];
@@ -95,14 +209,15 @@
   const pic = e => `<span class="pic">${e}</span>`;
   const SOUND_ALIKE = { c: ['k', 'q', 's'], k: ['c', 'q'], q: ['c', 'k'], s: ['c', 'z'], z: ['s'], j: ['g'], g: ['j'], i: ['e', 'y'], e: ['i'], u: ['a', 'o', 'y'], y: ['u', 'i', 'w'], w: ['y'], a: ['u'], o: ['u'], f: ['v'], v: ['f'] };
   const startLetters = Object.keys(D.START);
-  const wordPic = Object.fromEntries(D.CVC.concat(D.LONGER));
+  // The first question of a round sets the scene; after that the prompt is short.
+  const intro = (long, short) => (run.i === 0 ? long : short);
 
   const SECTIONS = [
-    { id: 'letters', name: 'Letters' },
-    { id: 'numbers', name: 'Numbers' },
-    { id: 'sounds', name: 'Sounds' },
-    { id: 'words', name: 'Words' },
-    { id: 'writing', name: 'Writing' }
+    { id: 'letters', name: 'Letters', place: 'The letter tree' },
+    { id: 'numbers', name: 'Numbers', place: 'The number pond' },
+    { id: 'sounds', name: 'Sounds', place: 'The sound bell' },
+    { id: 'words', name: 'Words', place: 'The word house' },
+    { id: 'writing', name: 'Writing', place: 'The big pencil' }
   ];
 
   const GAMES = [
@@ -115,9 +230,10 @@
         let wrong;
         if (lv === 2) wrong = one(D.CONFUSABLE.filter(g => g.includes(t))).filter(x => x !== t);
         else wrong = others(pool, 3, [t]);
+        const again = `Find the letter ${t.toUpperCase()}.`;
         return {
-          type: 'pick', key: t, cols: 2,
-          say: `Find the letter ${t.toUpperCase()}.`,
+          type: 'pick', key: t, cols: 2, feed: true, again,
+          say: intro(`${N()} is hungry for letters! ${again}`, again),
           choices: shuffle([{ html: ltr(t), ok: true }].concat(wrong.map(x => ({ html: ltr(x) }))))
         };
       }
@@ -128,12 +244,12 @@
       make(lv) {
         const t = choose(this.id + lv, D.LOWER);
         const T = t.toUpperCase();
-        const show = lv === 0 ? T : t;
         const conv = x => (lv === 0 ? x : x.toUpperCase());
+        const again = lv === 0 ? `This is big ${T}. Find little ${T}.` : `This is little ${T}. Find big ${T}.`;
         return {
-          type: 'pick', key: t, cols: 2,
-          say: lv === 0 ? `This is big ${T}. Find little ${T}.` : `This is little ${T}. Find big ${T}.`,
-          stim: `<div class="stim-letter">${esc(show)}</div>`,
+          type: 'pick', key: t, cols: 2, again,
+          say: intro(`These letters lost their partners. Can you help ${N()}? ${again}`, again),
+          stim: `<div class="stim-letter">${esc(lv === 0 ? T : t)}</div>`,
           choices: shuffle([{ html: ltr(conv(t)), ok: true }].concat(others(D.LOWER, 3, [t]).map(x => ({ html: ltr(conv(x)) }))))
         };
       }
@@ -151,9 +267,10 @@
         [t + 1, t - 1, t + 10, t - 10].forEach(x => near.add(x));
         let wrong = shuffle([...near].filter(x => x !== t && x >= lo && x <= hi)).slice(0, 2);
         wrong = wrong.concat(others(pool, 3 - wrong.length, [t, ...wrong]));
+        const again = `Find the number ${t}.`;
         return {
-          type: 'pick', key: t, cols: 2,
-          say: `Find the number ${t}.`,
+          type: 'pick', key: t, cols: 2, feed: true, again,
+          say: intro(`${N()} is hungry for numbers! ${again}`, again),
           choices: shuffle([{ html: ltr(t), ok: true }].concat(wrong.map(x => ({ html: ltr(x) }))))
         };
       }
@@ -169,9 +286,10 @@
         const nearby = [t - 2, t - 1, t + 1, t + 2].filter(x => x >= Math.max(1, lo - 1) && x <= hi + 1);
         const wrong = shuffle(nearby).slice(0, lv === 0 ? 2 : 3);
         const e = one(D.COUNTABLES);
+        const again = 'How many? Count them.';
         return {
-          type: 'pick', key: t, cols: lv === 0 ? 3 : 2, small: true,
-          say: 'How many? Count them.',
+          type: 'pick', key: t, cols: lv === 0 ? 3 : 2, small: true, again,
+          say: intro(`Look what ${N()} found! ${again}`, again),
           stim: `<div class="count-box n${t > 10 ? 'big' : 'small'}">${Array(t).fill(`<span>${e}</span>`).join('')}</div>`,
           after: String(t),
           choices: [t, ...wrong].sort((a, b) => a - b).map(x => ({ html: ltr(x), ok: x === t }))
@@ -184,18 +302,19 @@
       make(lv) {
         let word, emoji, t;
         if (lv < 2) {
-          t = choose(this.id, startLetters);
+          t = choose(this.id + lv, startLetters);
           [word, emoji] = one(D.START[t]);
         } else {
           [word, emoji] = choose(this.id + lv, D.CVC, x => x[0]);
           t = word[word.length - 1];
         }
         const wrong = others(D.LOWER, lv === 0 ? 2 : 3, [t, 'x'].concat(SOUND_ALIKE[t] || []));
+        const again = lv < 2 ? `${word}. What letter does ${word} start with?` : `${word}. What letter is at the end of ${word}?`;
         return {
-          type: 'pick', key: lv < 2 ? t : word, cols: lv === 0 ? 3 : 2, small: true,
-          say: lv < 2 ? `${word}. What letter does ${word} start with?` : `${word}. What letter is at the end of ${word}?`,
+          type: 'pick', key: lv < 2 ? t : word, cols: lv === 0 ? 3 : 2, small: true, again,
+          say: intro(`${N()} found some things. ${again}`, again),
           stim: `<div class="stim-pic">${emoji}</div>`, stimSay: word,
-          after: lv < 2 ? `${t.toUpperCase()}, for ${word}.` : `${word} ends with ${t.toUpperCase()}.`,
+          after: [sound(t), lv < 2 ? `${t.toUpperCase()}, for ${word}.` : `${word} ends with ${t.toUpperCase()}.`],
           choices: shuffle([{ html: ltr(t), ok: true }].concat(wrong.map(x => ({ html: ltr(x) }))))
         };
       }
@@ -204,14 +323,16 @@
       id: 'soundPic', sec: 'sounds', icon: '🐝', name: 'Find the picture',
       levels: ['3 pictures', '4 pictures'],
       make(lv) {
-        const t = choose(this.id, startLetters);
+        const t = choose(this.id + lv, startLetters);
+        const T = t.toUpperCase();
         const [word, emoji] = one(D.START[t]);
         const wrong = others(startLetters, lv === 0 ? 2 : 3, [t].concat(SOUND_ALIKE[t] || [])).map(l => one(D.START[l]));
+        const again = [`Which one starts with ${T}?`, sound(t)];
         return {
-          type: 'pick', key: t, cols: lv === 0 ? 3 : 2, small: lv === 0,
-          say: `Which one starts with ${t.toUpperCase()}?`,
-          stim: `<div class="stim-letter">${t.toUpperCase()}<span>${t}</span></div>`,
-          after: `${word} starts with ${t.toUpperCase()}.`,
+          type: 'pick', key: t, cols: lv === 0 ? 3 : 2, small: lv === 0, again,
+          say: intro([`${N()} wants something that starts with ${T}.`, sound(t), 'Which one?'], again),
+          stim: `<div class="stim-letter">${T}<span>${t}</span></div>`,
+          after: `${word} starts with ${T}.`,
           choices: shuffle([{ html: pic(emoji), ok: true, say: word }].concat(wrong.map(([w, e]) => ({ html: pic(e), say: w }))))
         };
       }
@@ -226,9 +347,10 @@
         if (lv === 1) wrong = shuffle(pool.filter(x => x[0] !== word && (x[0][0] === word[0] || x[0].slice(1) === word.slice(1)))).slice(0, 3);
         const n = lv === 0 ? 2 : 3;
         wrong = wrong.concat(others(pool, n - wrong.length, [pool.find(x => x[0] === word), ...wrong])).filter(x => x[1] !== emoji);
+        const again = 'Read the word. Which picture is it?';
         return {
-          type: 'pick', key: word, cols: lv === 0 ? 3 : 2, small: lv === 0,
-          say: 'Read the word. Which picture is it?',
+          type: 'pick', key: word, cols: lv === 0 ? 3 : 2, small: lv === 0, again,
+          say: intro(`${N()} can't read these words. Can you help? Which picture is it?`, again),
           stim: `<div class="stim-word">${esc(word)}</div>`, stimSay: word, stimHelps: true,
           after: word,
           choices: shuffle([{ html: pic(emoji), ok: true }].concat(wrong.map(([w, e]) => ({ html: pic(e), say: w }))))
@@ -241,9 +363,10 @@
       make(lv) {
         const t = choose(this.id + lv, D.SIGHT[lv]);
         const pool = D.SIGHT.slice(0, lv + 1).flat();
+        const again = `Find the word: ${t}.`;
         return {
-          type: 'pick', key: t, cols: 2,
-          say: `Find the word: ${t}.`,
+          type: 'pick', key: t, cols: 2, feed: true, again,
+          say: intro(`${N()} is hungry for words! ${again}`, again),
           choices: shuffle([{ html: `<span class="wrd">${esc(t)}</span>`, ok: true }].concat(others(pool, 3, [t]).map(x => ({ html: `<span class="wrd">${esc(x)}</span>` }))))
         };
       }
@@ -255,9 +378,10 @@
         const [word, emoji] = choose(this.id + lv, lv === 2 ? D.LONGER : D.CVC, x => x[0]);
         const letters = word.split('');
         const extra = lv === 0 ? [] : others(D.LOWER, 2, letters);
+        const again = `${word}. Build ${word}.`;
         return {
-          type: 'build', key: word,
-          say: `${word}. Spell ${word}.`,
+          type: 'build', key: word, again,
+          say: intro(`Oh no, ${N()}'s words fell apart! Help build: ${word}.`, again),
           stim: `<div class="stim-pic">${emoji}</div>`, stimSay: word,
           answer: letters, tiles: shuffle(letters.concat(extra)), after: word, letters: true
         };
@@ -271,7 +395,11 @@
         const words = s.split(' ');
         let tiles = shuffle(words);
         if (tiles.join(' ') === s) tiles = tiles.reverse();
-        return { type: 'build', key: s, say: s + '.', answer: words, tiles, after: s + '.', letters: false };
+        return {
+          type: 'build', key: s, again: s + '.',
+          say: intro(`${N()}'s sentences got mixed up. Put it back: ${s}.`, s + '.'),
+          answer: words, tiles, after: s + '.', letters: false
+        };
       }
     },
     {
@@ -279,15 +407,17 @@
       levels: ['Small letters', 'Capitals'],
       make(lv) {
         const t = choose(this.id + lv, lv === 0 ? D.LOWER : D.UPPER);
-        return { type: 'trace', key: t, glyphs: [t], say: `Trace the letter ${t.toUpperCase()}.` };
+        const again = `Trace the letter ${t.toUpperCase()}.`;
+        return { type: 'trace', key: t, glyphs: [t], again, say: intro(`Help ${N()} learn to write. ${again}`, again) };
       }
     },
     {
       id: 'traceNumbers', sec: 'writing', icon: '5', name: 'Trace numbers', n: 6,
       levels: ['0 to 9'],
-      make() {
-        const t = choose(this.id, '0123456789'.split(''));
-        return { type: 'trace', key: t, glyphs: [t], say: `Trace the number ${t}.` };
+      make(lv) {
+        const t = choose(this.id + lv, '0123456789'.split(''));
+        const again = `Trace the number ${t}.`;
+        return { type: 'trace', key: t, glyphs: [t], again, say: intro(`Help ${N()} write numbers. ${again}`, again) };
       }
     },
     {
@@ -295,63 +425,196 @@
       levels: ['Short words', 'Longer words'],
       make(lv) {
         const [word, emoji] = choose(this.id + lv, lv === 0 ? D.CVC : D.LONGER, x => x[0]);
-        return { type: 'trace', key: word, glyphs: word.split(''), word, emoji, say: `Write the word ${word}.`, after: word };
+        const again = `Write the word ${word}.`;
+        return { type: 'trace', key: word, glyphs: word.split(''), word, emoji, again, say: intro(`Help ${N()} write words. ${again}`, again), after: word };
       }
     }
   ];
   const byId = Object.fromEntries(GAMES.map(g => [g.id, g]));
   const gstat = id => (store.games[id] = store.games[id] || { level: 0, rounds: [] });
 
-  /* ---------- screens ---------- */
-  let run = { used: new Set() };
+  /* ---------- home: Pip's world ---------- */
+  let run = { used: new Set(), i: 0 };
   let runId = 0;
   const alive = id => id === runId;
+  let awake = false;
+  let sleepTimer = null;
+
+  function worldSVG() {
+    const lbl = (x, y, t) => `<text x="${x}" y="${y}" class="lbl">${t}</text>`;
+    const fruit = (x, y, t) => `<g class="fruit"><circle cx="${x}" cy="${y}" r="17" fill="#FF6B4A"/><text x="${x}" y="${y + 7}" class="ft">${t}</text></g>`;
+    const pad = (x, y, t) => `<g class="fruit"><circle cx="${x}" cy="${y}" r="17" fill="#3FA06A"/><text x="${x}" y="${y + 7}" class="ft">${t}</text></g>`;
+    return `<svg class="world" viewBox="0 0 400 770" preserveAspectRatio="xMidYMax meet">
+      <rect x="-800" y="-800" width="2000" height="1600" fill="#CDEBFA"/>
+      <circle cx="338" cy="150" r="30" fill="#FFD35A"/>
+      <g fill="#fff" class="cloud"><ellipse cx="90" cy="150" rx="40" ry="14"/><ellipse cx="112" cy="138" rx="24" ry="14"/></g>
+      <g fill="#fff" class="cloud c2"><ellipse cx="240" cy="118" rx="30" ry="11"/></g>
+      <path d="M-800 250 Q 60 170 200 235 T 1200 215 V 900 H -800 Z" fill="#B7E0A0"/>
+      <path d="M-800 330 Q 120 280 260 320 T 1200 310 V 1600 H -800 Z" fill="#9AD27A"/>
+      <path d="M440 372 C 340 372 330 415 300 428 C 240 455 250 560 160 590 C 100 610 60 660 -40 695" fill="none" stroke="#7CC8EE" stroke-width="44" stroke-linecap="round"/>
+
+      <g class="spot" data-sec="letters">
+        <rect x="8" y="196" width="160" height="212" fill="transparent"/>
+        <rect x="82" y="300" width="24" height="72" rx="8" fill="#9A6B4B"/>
+        <circle cx="94" cy="262" r="56" fill="#4FAE5A"/><circle cx="52" cy="292" r="34" fill="#4FAE5A"/><circle cx="138" cy="290" r="36" fill="#4FAE5A"/>
+        ${fruit(76, 246, 'A')}${fruit(118, 266, 'b')}${fruit(60, 294, 'c')}
+        ${lbl(94, 398, 'Letters')}
+      </g>
+      <g class="spot" data-sec="numbers">
+        <rect x="216" y="376" width="172" height="130" fill="transparent"/>
+        <ellipse cx="300" cy="430" rx="80" ry="46" fill="#7CC8EE" stroke="#5FB3DD" stroke-width="5"/>
+        ${pad(266, 422, '1')}${pad(308, 444, '2')}${pad(338, 414, '3')}
+        ${lbl(300, 500, 'Numbers')}
+      </g>
+      <g class="spot" data-sec="sounds">
+        <rect x="22" y="418" width="140" height="138" fill="transparent"/>
+        <circle cx="92" cy="431" r="8" fill="#0E9384"/>
+        <path d="M52 502 Q52 440 92 434 Q132 440 132 502 Z" fill="#14B8A6"/>
+        <circle cx="92" cy="515" r="9" fill="#0E9384"/>
+        <rect x="44" y="496" width="96" height="13" rx="6.5" fill="#0E9384"/>
+        <g class="ring" fill="none" stroke="#14B8A6" stroke-width="5" stroke-linecap="round">
+          <path d="M146 456 q10 14 0 28"/><path d="M158 446 q16 24 0 48"/><path d="M38 456 q-10 14 0 28"/><path d="M26 446 q-16 24 0 48"/>
+        </g>
+        ${lbl(92, 550, 'Sounds')}
+      </g>
+      <g class="spot" data-sec="words">
+        <rect x="254" y="544" width="118" height="140" fill="transparent"/>
+        <rect x="270" y="590" width="84" height="62" rx="6" fill="#4F6FF5"/>
+        <polygon points="260,596 312,548 364,596" fill="#3550C8"/>
+        <rect x="300" y="620" width="24" height="32" rx="5" fill="#FFF6E5"/>
+        <text x="312" y="613" class="ft" style="font-size:17px">abc</text>
+        ${lbl(312, 678, 'Words')}
+      </g>
+      <g class="spot" data-sec="writing">
+        <rect x="140" y="626" width="130" height="144" fill="transparent"/>
+        <g transform="rotate(-28 205 690)">
+          <rect x="193" y="644" width="24" height="72" fill="#A855F7"/>
+          <rect x="193" y="632" width="24" height="14" rx="5" fill="#F9A8D4"/>
+          <polygon points="193,716 217,716 205,740" fill="#F5D6A8"/><polygon points="200,730 210,730 205,740" fill="#2B2A4C"/>
+        </g>
+        <path d="M150 738 q 9 -12 18 0 t 18 0 t 18 0" fill="none" stroke="#2B2A4C" stroke-width="4" stroke-linecap="round"/>
+        ${lbl(205, 764, 'Writing')}
+      </g>
+      <g class="palspot" id="palspot">
+        <rect x="170" y="250" width="124" height="134" fill="transparent"/>
+        <ellipse cx="231" cy="376" rx="46" ry="8" fill="#7FBF5E"/>
+        <svg x="166" y="246" width="130" height="132" viewBox="${PAL.BOX}" overflow="visible">${PAL.g(store.pal, awake ? 'idle' : 'sleep')}</svg>
+      </g>
+    </svg>`;
+  }
 
   function home() {
     runId++;
-    if (hasSpeech) speechSynthesis.cancel();
-    const cards = sec => GAMES.filter(g => g.sec === sec.id).map(g => {
-      const st = gstat(g.id);
-      const pips = g.levels.map((_, i) => `<i class="${i <= st.level ? 'on' : ''}"></i>`).join('');
-      return `<button class="card" data-game="${g.id}">
-        <span class="card-icon ${/^[\w]+$/.test(g.icon) ? 'txt' : ''}">${g.icon}</span>
-        <span class="card-name">${esc(g.name)}</span>
-        <span class="pips">${pips}</span>
-      </button>`;
-    }).join('');
+    hush();
+    const id = runId;
     $app.innerHTML = `
-      <div class="screen home">
-        <header class="home-top">
+      <div class="screen world-screen">
+        <header class="hud">
           <h1>My <b>A</b><b>B</b><b>C</b></h1>
           <div class="home-btns">
-            <button class="chip" id="stickers">${store.stickers.length ? store.stickers[store.stickers.length - 1] : '⭐'} <span>${store.stickers.length}</span></button>
+            <button class="chip" id="place" aria-label="${esc(N())}'s place">🏡 <span>${store.stickers.length}</span></button>
             <button class="chip quiet" id="grown" aria-label="Grown-ups (hold)">⚙</button>
           </div>
         </header>
-        ${SECTIONS.map(s => `<section class="sec sec-${s.id}"><h2>${s.name}</h2><div class="cards">${cards(s)}</div></section>`).join('')}
-        <p class="foot">Hold ⚙ for the grown-ups page</p>
+        ${worldSVG()}
       </div>`;
-    $app.querySelectorAll('.card').forEach(b => b.onclick = () => { tap(); startGame(b.dataset.game); });
-    $app.querySelector('#stickers').onclick = stickerBook;
+    const restSoon = () => {
+      clearTimeout(sleepTimer);
+      sleepTimer = setTimeout(() => { if (alive(id) && !document.querySelector('.sheet')) { awake = false; palState('sleep'); } }, 45000);
+    };
+    const wake = () => { awake = true; palState('idle'); restSoon(); };
+    $app.querySelectorAll('.spot').forEach(s => s.onclick = () => { tap(); wake(); sectionSheet(SECTIONS.find(x => x.id === s.dataset.sec)); });
+    $app.querySelector('#palspot').onclick = () => {
+      if (!awake) { wake(); pipTune(); palState('happy', 1400); say(`Hello! I'm ${N()}. Let's play!`); }
+      else { tap(); place(); }
+    };
+    $app.querySelector('#place').onclick = () => { tap(); place(); };
     const g = $app.querySelector('#grown');
     let timer = null;
     g.onpointerdown = () => { timer = setTimeout(() => { timer = null; grownups(); }, 650); };
     g.onpointerup = g.onpointerleave = () => { if (timer) { clearTimeout(timer); timer = null; } };
     g.oncontextmenu = e => e.preventDefault();
+    if (awake) restSoon();
   }
 
+  function sectionSheet(sec) {
+    const cards = GAMES.filter(g => g.sec === sec.id).map(g => `<button class="card" data-game="${g.id}">
+        <span class="card-icon ${/^[\w]+$/.test(g.icon) ? 'txt' : ''}">${g.icon}</span>
+        <span class="card-name">${esc(g.name)}</span>
+      </button>`).join('');
+    const d = document.createElement('div');
+    d.className = 'sheet';
+    d.innerHTML = `<div class="sheet-box sec-${sec.id}"><h3>${esc(sec.place)}</h3><div class="cards">${cards}</div></div>`;
+    d.onclick = e => {
+      const b = e.target.closest('.card');
+      if (b) { d.remove(); tap(); startGame(b.dataset.game); }
+      else if (!e.target.closest('.sheet-box')) d.remove();
+    };
+    document.body.appendChild(d);
+    say(sec.place + '!');
+  }
+  const closeSheets = () => document.querySelectorAll('.sheet').forEach(s => s.remove());
+
   function pushNav() { try { history.pushState({ in: 1 }, ''); } catch (e) { /* ignore */ } }
-  window.addEventListener('popstate', home);
+  window.addEventListener('popstate', () => { closeSheets(); stopMic(); home(); });
   const goHome = () => { if (history.state && history.state.in) history.back(); else home(); };
 
-  function stickerBook() {
+  /* ---------- Pip's place: stickers, hats, colours ---------- */
+  function place() {
     pushNav();
+    runId++;
+    const p = store.pal;
+    const draw = () => {
+      $app.querySelector('#yp').innerHTML = PAL.svg(p, 'idle');
+      $app.querySelector('#hats').innerHTML = `<button data-h="" class="${p.hat ? '' : 'on'}">🚫</button>` +
+        PAL.HATS.map(h => (p.hats.includes(h) ? `<button data-h="${h}" class="${p.hat === h ? 'on' : ''}">${h}</button>` : '<button class="locked" disabled>?</button>')).join('');
+      $app.querySelector('#cols').innerHTML = Object.keys(PAL.COLORS).map(c => (p.colors.includes(c)
+        ? `<button data-c="${c}" class="${p.color === c ? 'on' : ''}"><i style="background:${PAL.COLORS[c].body}"></i></button>`
+        : '<button class="locked" disabled>?</button>')).join('');
+    };
     $app.innerHTML = `
-      <div class="screen book">
-        <div class="bar"><button class="round" id="x" aria-label="Back">←</button><h2>My stickers</h2><span></span></div>
-        <div class="stickers">${store.stickers.length ? store.stickers.map(s => `<span>${s}</span>`).join('') : '<p class="empty">Finish a game to get your first sticker!</p>'}</div>
+      <div class="screen place">
+        <div class="bar"><button class="round" id="x" aria-label="Back">←</button><h2>${esc(N())}'s place</h2><span></span></div>
+        <div class="yard" id="yard">
+          <svg class="yard-bg" viewBox="0 0 100 100" preserveAspectRatio="none">
+            <rect width="100" height="100" fill="#CDEBFA"/>
+            <path d="M0 34 Q 30 22 55 32 T 100 28 V 100 H 0 Z" fill="#B7E0A0"/>
+            <path d="M0 50 Q 40 42 70 49 T 100 47 V 100 H 0 Z" fill="#9AD27A"/>
+            <path d="M0 90 Q 30 84 60 90 T 100 88 V 100 H 0 Z" fill="#7CC8EE"/>
+          </svg>
+          <button class="yard-pal" id="yp" aria-label="${esc(N())}"></button>
+          ${store.stickers.map((s, i) => `<span class="stk" data-i="${i}" style="left:${s.x * 100}%;top:${s.y * 100}%">${s.e}</span>`).join('')}
+          ${store.stickers.length ? '' : '<p class="yard-empty">Finish a game to win things for this place!</p>'}
+        </div>
+        <div class="tray">
+          <div class="tray-row" id="hats"></div>
+          <div class="tray-row" id="cols"></div>
+        </div>
       </div>`;
+    draw();
     $app.querySelector('#x').onclick = goHome;
+    $app.querySelector('#yp').onclick = () => { pipTune(); palState('happy', 1300); };
+    $app.querySelector('.tray').onclick = e => {
+      const b = e.target.closest('button');
+      if (!b || b.disabled) return;
+      if (b.dataset.h !== undefined) p.hat = b.dataset.h || null;
+      if (b.dataset.c) p.color = b.dataset.c;
+      save(); draw(); chime(); palState('happy', 1100);
+    };
+    const yard = $app.querySelector('#yard');
+    yard.querySelectorAll('.stk').forEach(el => {
+      const s = store.stickers[+el.dataset.i];
+      let held = false;
+      el.onpointerdown = e => { held = true; try { el.setPointerCapture(e.pointerId); } catch (err) { /* ok */ } el.classList.add('drag'); tap(); };
+      el.onpointermove = e => {
+        if (!held) return;
+        const r = yard.getBoundingClientRect();
+        s.x = clamp((e.clientX - r.left) / r.width, 0.06, 0.94);
+        s.y = clamp((e.clientY - r.top) / r.height, 0.06, 0.94);
+        el.style.left = s.x * 100 + '%'; el.style.top = s.y * 100 + '%';
+      };
+      el.onpointerup = el.onpointercancel = () => { if (held) { held = false; el.classList.remove('drag'); save(); } };
+    });
   }
 
   /* ---------- running a round ---------- */
@@ -359,6 +622,8 @@
     const g = byId[id];
     const st = gstat(id);
     st.level = Math.min(st.level, g.levels.length - 1);
+    clearTimeout(sleepTimer);
+    awake = true;
     pushNav();
     run = { g, level: st.level, i: 0, n: g.n || 8, first: 0, used: new Set(), id: ++runId, marks: [] };
     nextQ();
@@ -385,8 +650,8 @@
     const d = document.createElement('div');
     d.className = 'sheet';
     d.innerHTML = `<div class="sheet-box"><h3>${esc(g.name)}</h3>
-      ${g.levels.map((l, i) => `<button data-l="${i}" class="${i === run.level ? 'on' : ''}"><b>${i + 1}</b> ${esc(l)}</button>`).join('')}
-      <button class="cancel">Close</button></div>`;
+      ${g.levels.map((l, i) => `<button data-l="${i}" class="opt ${i === run.level ? 'on' : ''}"><b>${i + 1}</b> ${esc(l)}</button>`).join('')}
+      <button class="opt cancel">Close</button></div>`;
     d.onclick = e => {
       const b = e.target.closest('button');
       if (b && b.dataset.l !== undefined) {
@@ -408,48 +673,71 @@
     say(q.say);
   }
 
-  async function answered(q, speakAfter = true) {
+  const praiseClips = () => Clips.ids().filter(k => k.startsWith('praise-'));
+  function cheer(q) {
+    if (q.after) return q.after;
+    const mine = praiseClips();
+    if (mine.length) return { clip: one(mine) };
+    return one(q.feed ? D.YUM : D.PRAISE);
+  }
+
+  async function answered(q) {
     const id = run.id;
-    const st = (store.items[run.g.id + '|' + q.key] = itemStat(run.g.id, q.key));
+    const st = (store.items[run.g.id + run.level + '|' + q.key] = itemStat(run.g.id + run.level, q.key));
     st[0]++; if (!run.clean) st[1]++;
     run.marks[run.i] = run.clean;
     if (run.clean) run.first++;
     save();
     chime();
-    await Promise.all([speakAfter ? say(q.after || one(D.PRAISE)) : null, wait(850)]);
+    palState('happy', 1500);
+    await Promise.all([say(cheer(q)), wait(950)]);
     if (!alive(id)) return;
     run.i++;
     nextQ();
   }
 
-  const promptBtn = `<button class="speak" id="speak" aria-label="Hear it again">🔊</button>`;
   function wireCommon(q) {
     const sp = $app.querySelector('#speak');
-    if (sp) sp.onclick = () => say(q.say);
+    if (sp) sp.onclick = () => say(q.again || q.say);
     const stim = $app.querySelector('.stim');
     if (stim && q.stimSay) stim.onclick = () => { if (q.stimHelps) run.clean = false; say(q.stimSay); };
   }
 
   function renderPick(q) {
     shell(`
-      <div class="prompt">${promptBtn}</div>
+      <div class="prompt">${palBtn()}</div>
       ${q.stim ? `<div class="stim ${q.stimSay ? 'tappable' : ''}">${q.stim}</div>` : '<div class="stim-gap"></div>'}
       <div class="choices cols-${q.cols} ${q.small ? 'small' : ''}">
         ${q.choices.map((c, i) => `<button class="choice" data-i="${i}">${c.html}</button>`).join('')}
       </div>`);
     wireCommon(q);
     let locked = false;
-    $app.querySelectorAll('.choice').forEach(b => b.onclick = () => {
+    $app.querySelectorAll('.choice').forEach(b => b.onclick = async () => {
       if (locked || b.disabled) return;
       const c = q.choices[+b.dataset.i];
       if (c.ok) {
         locked = true;
+        const id = run.id;
         b.classList.add('yes');
+        if (q.feed) {
+          await wait(180);
+          if (!alive(id)) return;
+          palState('eat', 900);
+          const food = b.firstElementChild;
+          const flown = flyTo(food, $app.querySelector('#speak'));
+          food.style.visibility = 'hidden';
+          await flown;
+          if (!alive(id)) return;
+          chomp();
+          await wait(380);
+          if (!alive(id)) return;
+        }
         answered(q);
       } else {
         run.clean = false;
         b.classList.add('nope'); b.disabled = true;
         boop();
+        palState('think', 1200);
         if (c.say) say(c.say);
       }
     });
@@ -457,7 +745,7 @@
 
   function renderBuild(q) {
     shell(`
-      <div class="prompt">${promptBtn}</div>
+      <div class="prompt">${palBtn()}</div>
       ${q.stim ? `<div class="stim tappable">${q.stim}</div>` : '<div class="stim-gap"></div>'}
       <div class="slots ${q.letters ? 'letters' : 'wordsy'}">${q.answer.map(() => '<span class="slot"></span>').join('')}</div>
       <div class="tiles ${q.letters ? 'letters' : 'wordsy'}">${q.tiles.map((t, i) => `<button class="tile" data-i="${i}">${esc(t)}</button>`).join('')}</div>`);
@@ -472,10 +760,11 @@
         b.disabled = true; b.classList.add('used');
         pos++;
         if (pos === q.answer.length) answered(q);
-        else { tap(); say(q.letters ? t.toUpperCase() : t); }
+        else { tap(); say(q.letters ? (sound(t) || t.toUpperCase()) : t); }
       } else {
         run.clean = false;
         boop();
+        palState('think', 1000);
         b.classList.remove('wob'); void b.offsetWidth; b.classList.add('wob');
       }
     });
@@ -484,9 +773,9 @@
   /* ---------- tracing ---------- */
   const FONT = px => `700 ${px}px Andika, "Comic Sans MS", sans-serif`;
   function renderTrace(q) {
-    const S = Math.round(Math.min(window.innerWidth - 32, window.innerHeight * 0.56, 460));
+    const S = Math.round(Math.min(window.innerWidth - 32, window.innerHeight * 0.52, 460));
     shell(`
-      <div class="prompt">${promptBtn}${q.word ? `<div class="trace-word"><span class="tw-pic">${q.emoji}</span>${q.glyphs.map(g => `<b>${esc(g)}</b>`).join('')}</div>` : ''}</div>
+      <div class="prompt">${palBtn()}${q.word ? `<div class="trace-word"><span class="tw-pic">${q.emoji}</span>${q.glyphs.map(g => `<b>${esc(g)}</b>`).join('')}</div>` : ''}</div>
       <div class="pad" style="width:${S}px;height:${S}px">
         <canvas id="guide"></canvas><canvas id="ink"></canvas>
       </div>
@@ -514,7 +803,6 @@
       const x = (size - w) / 2, y = size * 0.67;
       if (stroke) { ctx.lineWidth = stroke; ctx.lineJoin = 'round'; ctx.strokeText(ch, x, y); }
       ctx.fillText(ch, x, y);
-      return fs;
     }
 
     function setGlyph() {
@@ -522,7 +810,6 @@
       gc.clearRect(0, 0, S, S);
       ic.clearRect(0, 0, S, S);
       inkC.clearRect(0, 0, M, M);
-      // writing lines
       const fs = S * 0.62;
       gc.font = FONT(fs);
       const xh = gc.measureText('x').actualBoundingBoxAscent || fs * 0.5;
@@ -535,7 +822,6 @@
       gc.setLineDash([]);
       gc.fillStyle = '#D9E2F3';
       drawGlyph(gc, S, ch);
-      // marking masks
       maskC.clearRect(0, 0, M, M); tolC.clearRect(0, 0, M, M);
       maskC.fillStyle = tolC.fillStyle = tolC.strokeStyle = '#000';
       drawGlyph(maskC, M, ch);
@@ -555,7 +841,6 @@
       inkC.strokeStyle = '#000'; inkC.lineCap = inkC.lineJoin = 'round'; inkC.lineWidth = M * 0.1;
       inkC.beginPath(); inkC.moveTo(a.x * k, a.y * k); inkC.lineTo(b.x * k, b.y * k); inkC.stroke();
     }
-
     function dot(p) { // a tap leaves a dot, so i and j can be finished
       const k = M / S;
       ic.fillStyle = '#3B3A6B';
@@ -580,6 +865,7 @@
       $app.querySelector('.pad').classList.add('yes');
       if (gi < q.glyphs.length - 1) {
         chime();
+        palState('happy', 700);
         await wait(600);
         if (!alive(id)) return;
         gi++; busy = false;
@@ -611,7 +897,11 @@
       if (busy) return;
       run.clean = false;
       if (gi < q.glyphs.length - 1) { gi++; setGlyph(); }
-      else { busy = true; run.marks[run.i] = false; const s = (store.items[run.g.id + '|' + q.key] = itemStat(run.g.id, q.key)); s[0]++; s[1]++; save(); run.i++; nextQ(); }
+      else {
+        busy = true; run.marks[run.i] = false;
+        const s = (store.items[run.g.id + run.level + '|' + q.key] = itemStat(run.g.id + run.level, q.key));
+        s[0]++; s[1]++; save(); run.i++; nextQ();
+      }
     };
 
     const ready = document.fonts && document.fonts.load ? document.fonts.load(FONT(40), 'abc') : Promise.resolve();
@@ -619,6 +909,20 @@
   }
 
   /* ---------- end of round ---------- */
+  function nextReward() {
+    const p = store.pal;
+    const n = store.stickers.length + p.hats.length + p.colors.length - 1; // rewards so far
+    const hatsLeft = PAL.HATS.filter(h => !p.hats.includes(h));
+    const colsLeft = Object.keys(PAL.COLORS).filter(c => !p.colors.includes(c));
+    if (n % 5 === 1 && hatsLeft.length) { const h = hatsLeft[0]; p.hats.push(h); p.hat = h; return { type: 'hat', label: `A new hat for ${N()}!`, line: 'I got a new hat!' }; }
+    if (n % 5 === 3 && colsLeft.length) { const c = colsLeft[0]; p.colors.push(c); return { type: 'color', c, label: `A new colour for ${N()}!`, line: 'I can change colour now!' }; }
+    const have = store.stickers.map(s => s.e);
+    const fresh = D.STICKERS.filter(s => !have.includes(s));
+    const e = one(fresh.length ? fresh : D.STICKERS);
+    store.stickers.push(Object.assign({ e }, freeSpot()));
+    return { type: 'sticker', e, label: 'New sticker!', line: 'A new sticker for my place!' };
+  }
+
   function finish() {
     const { g, level, first, n } = run;
     const st = gstat(g.id);
@@ -632,29 +936,41 @@
     } else if (pct <= 0.35 && level > 0) {
       st.level = level - 1; note = `Dropping back to level ${st.level + 1} for a while`;
     }
-    const sticker = one(D.STICKERS.filter(s => !store.stickers.includes(s)).concat(store.stickers.length >= D.STICKERS.length ? D.STICKERS : []));
-    store.stickers.push(sticker);
+    const r = nextReward();
     save();
     const stars = pct >= 0.85 ? 3 : pct >= 0.5 ? 2 : 1;
     runId++;
+    const look = r.type === 'color' ? Object.assign({}, store.pal, { color: r.c }) : store.pal;
     $app.innerHTML = `
       <div class="screen end sec-${g.sec}">
         <div class="stars">${[0, 1, 2].map(i => `<span class="${i < stars ? 'on' : ''}" style="animation-delay:${i * 0.18}s">★</span>`).join('')}</div>
-        <div class="prize">${sticker}</div>
-        <p class="prize-label">New sticker!</p>
+        <div class="prize-row">
+          <div class="end-pal">${PAL.svg(look, 'happy')}</div>
+          ${r.type === 'sticker' ? `<div class="prize">${r.e}</div>` : ''}
+        </div>
+        <p class="prize-label">${esc(r.label)}</p>
         <div class="end-btns">
           <button class="bigbtn" id="again">🔁 <span>Again</span></button>
           <button class="bigbtn alt" id="homeb">🏠 <span>Home</span></button>
         </div>
+        <button class="linkbtn" id="toplace">🏡 ${esc(N())}'s place</button>
         <p class="note">${first} of ${n} first go${note ? ' · ' + esc(note) : ''}</p>
       </div>`;
     fanfare();
-    say('You did it! Here is a new sticker.');
+    confetti();
+    say([Clips.has('finish') ? { clip: 'finish' } : 'You did it!', r.line]);
     $app.querySelector('#again').onclick = () => { history.replaceState(null, ''); startGame(g.id); };
     $app.querySelector('#homeb').onclick = goHome;
+    $app.querySelector('#toplace').onclick = () => { history.replaceState(null, ''); place(); };
   }
 
   /* ---------- grown-ups ---------- */
+  function tricky(id) {
+    return Object.entries(store.items)
+      .filter(([k, v]) => k.split('|')[0].replace(/\d$/, '') === id && v[1] > 0)
+      .sort((a, b) => b[1][1] / b[1][0] - a[1][1] / a[1][0] || b[1][1] - a[1][1])
+      .slice(0, 6).map(([k]) => k.split('|')[1]);
+  }
   function summaryText() {
     const lines = [`My ABC progress, ${new Date().toISOString().slice(0, 10)}`];
     GAMES.forEach(g => {
@@ -666,17 +982,12 @@
     });
     return lines.join('\n');
   }
-  function tricky(id) {
-    return Object.entries(store.items)
-      .filter(([k, v]) => k.startsWith(id + '|') && v[1] > 0)
-      .sort((a, b) => b[1][1] / b[1][0] - a[1][1] / a[1][0] || b[1][1] - a[1][1])
-      .slice(0, 6).map(([k]) => k.split('|')[1]);
-  }
 
   function grownups() {
     pushNav();
     runId++;
-    const rows = GAMES.map(g => {
+    hush();
+    const rows = SECTIONS.map(sec => `<h3 class="g-sec sec-${sec.id}">${sec.name}</h3>` + GAMES.filter(g => g.sec === sec.id).map(g => {
       const st = gstat(g.id);
       const recent = st.rounds.slice(-5).map(r => `${r.s}/${r.n}`).join(' · ') || 'not played yet';
       const t = tricky(g.id);
@@ -685,12 +996,14 @@
         <div class="g-levels">${g.levels.map((l, i) => `<button data-g="${g.id}" data-l="${i}" class="${i === st.level ? 'on' : ''}">${i + 1}. ${esc(l)}</button>`).join('')}</div>
         <div class="g-meta">First-go scores: ${recent}${t.length ? `<br>Tricky: ${esc(t.join(', '))}` : ''}</div>
       </div>`;
-    }).join('');
+    }).join('')).join('');
     $app.innerHTML = `
       <div class="screen grown">
         <div class="bar"><button class="round" id="x" aria-label="Back">←</button><h2>Grown-ups</h2><span></span></div>
         <p class="g-intro">Each game picks its own level: two strong rounds in a row moves up, a hard round moves back. Tap a level to set it yourself. Scores count answers that were right first go.</p>
         <div class="g-set">
+          <label class="g-name">Friend's name <input id="pname" maxlength="12" value="${esc(N())}" autocomplete="off"></label>
+          <button id="voice">🎙 Record your voice (${Clips.ids().length} saved)</button>
           <button id="rate">Voice speed: <b>${store.settings.rate < 0.8 ? 'slow' : store.settings.rate < 0.95 ? 'gentle' : 'normal'}</b></button>
           <button id="sfx">Sounds: <b>${store.settings.sfx ? 'on' : 'off'}</b></button>
           <button id="copy">Copy progress summary</button>
@@ -705,6 +1018,8 @@
       b.parentNode.querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b));
     });
     const rerender = () => { history.replaceState(null, ''); grownups(); };
+    $app.querySelector('#pname').onchange = e => { store.pal.name = e.target.value.trim().slice(0, 12) || 'Pip'; save(); };
+    $app.querySelector('#voice').onclick = () => { history.replaceState(null, ''); voiceScreen(); };
     $app.querySelector('#rate').onclick = () => { const r = store.settings.rate; store.settings.rate = r < 0.8 ? 0.85 : r < 0.95 ? 1 : 0.7; save(); rerender(); say('This is how fast I talk.'); };
     $app.querySelector('#sfx').onclick = () => { store.settings.sfx = !store.settings.sfx; save(); rerender(); };
     $app.querySelector('#copy').onclick = async e => {
@@ -713,10 +1028,88 @@
       catch (err) { window.prompt('Copy this:', text); }
     };
     $app.querySelector('#reset').onclick = () => {
-      if (!window.confirm('Clear all scores, levels and stickers?')) return;
-      store.games = {}; store.items = {}; store.stickers = []; save(); rerender();
+      if (!window.confirm('Clear all scores, levels, stickers, hats and colours? Voice recordings are kept.')) return;
+      store.games = {}; store.items = {}; store.stickers = [];
+      Object.assign(store.pal, { hat: null, hats: [], color: 'brown', colors: ['brown'] });
+      save(); rerender();
     };
   }
 
-  home();
+  /* ---------- recording your own voice ---------- */
+  let mic = null, recorder = null;
+  function stopMic() {
+    try { if (recorder && recorder.state === 'recording') recorder.stop(); } catch (e) { /* ok */ }
+    recorder = null;
+    if (mic) { mic.getTracks().forEach(t => t.stop()); mic = null; }
+  }
+  const PRAISE_SLOTS = [1, 2, 3, 4, 5, 6].map(i => 'praise-' + i);
+  const clipLabel = id => (id.startsWith('snd-') ? `the sound of “${id.slice(4)}”` : id === 'finish' ? 'the “round finished” cheer' : `praise ${id.slice(7)}`);
+
+  function voiceScreen() {
+    pushNav();
+    runId++;
+    hush();
+    const canRec = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder);
+    let sel = D.LOWER.map(l => 'snd-' + l).find(k => !Clips.has(k)) || 'snd-a';
+    const tile = (id, text) => `<button class="v-tile" data-id="${id}">${text}</button>`;
+    $app.innerHTML = `
+      <div class="screen grown voice">
+        <div class="bar"><button class="round" id="x" aria-label="Back">←</button><h2>Your voice</h2><span></span></div>
+        <p class="g-intro">Tap a tile, then Record. Recordings stay on this phone and are never uploaded.</p>
+        ${canRec ? '' : '<p class="g-intro warn">This browser cannot record. Open the app in Chrome and allow the microphone.</p>'}
+        <h3 class="g-sec">Letter sounds</h3>
+        <p class="g-intro">Say the pure sound, short and clean: “mmm”, not “em” or “muh”. Played when she builds words and matches sounds.</p>
+        <div class="v-grid">${D.LOWER.map(l => tile('snd-' + l, l)).join('')}</div>
+        <h3 class="g-sec">Praise</h3>
+        <p class="g-intro">Anything you like, such as “Great job!” with her name. One plays at random after a right answer.</p>
+        <div class="v-grid wide">${PRAISE_SLOTS.map((id, i) => tile(id, i + 1)).join('')}</div>
+        <h3 class="g-sec">Round finished</h3>
+        <div class="v-grid wide">${tile('finish', '🎉')}</div>
+        <div class="v-ctl">
+          <div id="v-what"></div>
+          <div class="v-btns">
+            <button id="v-rec" ${canRec ? '' : 'disabled'}>● Record</button>
+            <button id="v-play">▶ Play</button>
+            <button id="v-del">Delete</button>
+          </div>
+        </div>
+      </div>`;
+    const recBtn = $app.querySelector('#v-rec');
+    const paint = () => {
+      $app.querySelectorAll('.v-tile').forEach(t => { t.classList.toggle('has', Clips.has(t.dataset.id)); t.classList.toggle('on', t.dataset.id === sel); });
+      $app.querySelector('#v-what').textContent = `${Clips.has(sel) ? 'Recorded' : 'Not recorded'}: ${clipLabel(sel)}`;
+      $app.querySelector('#v-play').disabled = $app.querySelector('#v-del').disabled = !Clips.has(sel);
+    };
+    paint();
+    $app.querySelector('#x').onclick = () => { stopMic(); goHome(); };
+    $app.querySelectorAll('.v-tile').forEach(t => t.onclick = () => { if (recorder) return; sel = t.dataset.id; paint(); if (Clips.has(sel)) playClip(sel); });
+    $app.querySelector('#v-play').onclick = () => playClip(sel);
+    $app.querySelector('#v-del').onclick = async () => { await Clips.del(sel); paint(); };
+    recBtn.onclick = async () => {
+      if (recorder) { try { recorder.stop(); } catch (e) { /* ok */ } return; }
+      try {
+        mic = mic || await navigator.mediaDevices.getUserMedia({ audio: true });
+      } catch (e) { $app.querySelector('#v-what').textContent = 'Microphone not allowed. Check the site permissions.'; return; }
+      const id = sel, chunks = [];
+      const r = recorder = new MediaRecorder(mic);
+      r.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data); };
+      r.onstop = async () => {
+        if (recorder === r) recorder = null;
+        recBtn.textContent = '● Record'; recBtn.classList.remove('live');
+        if (!chunks.length || !document.querySelector('.voice')) return;
+        await Clips.put(id, new Blob(chunks, { type: r.mimeType || 'audio/webm' }));
+        if (document.querySelector('.voice')) paint();
+        await playClip(id);
+        // step on to the next empty letter so a run of 26 is quick
+        if (id.startsWith('snd-') && sel === id) { const nxt = D.LOWER.map(l => 'snd-' + l).find(k => !Clips.has(k)); if (nxt) sel = nxt; }
+        if (document.querySelector('.voice')) paint();
+      };
+      r.start();
+      recBtn.textContent = '■ Stop'; recBtn.classList.add('live');
+      setTimeout(() => { if (r.state === 'recording') r.stop(); }, id.startsWith('snd-') ? 2500 : 5000);
+    };
+  }
+
+  // Recordings load before the first screen so they are ready for the first game.
+  Promise.race([Clips.ready, wait(1200)]).then(home);
 })();
