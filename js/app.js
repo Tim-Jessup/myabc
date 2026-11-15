@@ -838,7 +838,7 @@
     const M = 96; // small hidden canvases used to mark the tracing
     const mk = () => { const c = document.createElement('canvas'); c.width = c.height = M; return c.getContext('2d', { willReadFrequently: true }); };
     const maskC = mk(), tolC = mk(), inkC = mk();
-    let gi = 0, glyphPx = null, tolPx = null, shape = null, nudged = false, busy = false, last = null;
+    let gi = 0, glyphPx = null, tolPx = null, shape = null, nudged = false, busy = false, last = null, hintTimer = null;
     const id = run.id;
 
     function drawGlyph(ctx, size, ch, stroke) {
@@ -857,6 +857,7 @@
       ic.clearRect(0, 0, S, S);
       inkC.clearRect(0, 0, M, M);
       hc.clearRect(0, 0, S, S);
+      clearTimeout(hintTimer);
       nudged = false;
       const fs = S * 0.62;
       gc.font = FONT(fs);
@@ -908,9 +909,14 @@
     function check() {
       const r = TRACE.judge(shape, inkC.getImageData(0, 0, M, M).data, tolPx);
       if (r.pass) { hc.clearRect(0, 0, S, S); return true; }
+      // Only hint once she has stopped drawing for a moment, not between strokes.
+      clearTimeout(hintTimer);
       if (r.strayOk && r.progress >= 0.5) {
-        showHint(r);
-        if (!nudged && r.missing.length) { nudged = true; say(LINES.nearly); }
+        hintTimer = setTimeout(() => {
+          if (!alive(id) || busy || last) return;
+          showHint(r);
+          if (!nudged && r.missing.length) { nudged = true; say(LINES.nearly); }
+        }, 2000);
       }
       return false;
     }
@@ -934,6 +940,7 @@
     const pt = e => { const r = ink.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; };
     ink.onpointerdown = e => {
       if (busy) return;
+      clearTimeout(hintTimer);
       e.preventDefault();
       try { ink.setPointerCapture(e.pointerId); } catch (err) { /* ok */ }
       last = pt(e); dot(last);
@@ -947,7 +954,7 @@
       last = null;
       if (!busy && check()) passed();
     };
-    $app.querySelector('#clear').onclick = () => { if (!busy) { ic.clearRect(0, 0, S, S); inkC.clearRect(0, 0, M, M); hc.clearRect(0, 0, S, S); } };
+    $app.querySelector('#clear').onclick = () => { if (!busy) { clearTimeout(hintTimer); ic.clearRect(0, 0, S, S); inkC.clearRect(0, 0, M, M); hc.clearRect(0, 0, S, S); } };
     $app.querySelector('#skip').onclick = () => {
       if (busy) return;
       run.clean = false;
