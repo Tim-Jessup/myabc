@@ -1,6 +1,6 @@
 // Network-first so updates pushed to GitHub show up straight away;
 // falls back to the cache so the app still works offline.
-const CACHE = 'myabc-v4';
+const CACHE = 'myabc-v5';
 const AUDIO = 'myabc-audio'; // voice recordings never change once made, so they are kept across versions
 const CORE = [
   './', 'index.html', 'css/style.css', 'js/data.js', 'js/pal.js', 'js/lines.js', 'js/trace.js', 'js/app.js', 'audio/index.json',

@@ -238,3 +238,48 @@ h1, h2, h3, p { margin: 0; }
 #v-rec.live { background: #C2410C; color: #fff; border-color: #C2410C; }
 
 .ver { color: var(--soft); font-size: 13px; }
+
+/* ----- the path ----- */
+.path-screen { padding: 0; max-width: none; height: 100dvh; background: #CDEBFA; position: relative; overflow: hidden; display: block; }
+.path-hud { background: linear-gradient(#CDEBFA 70%, rgba(205, 235, 250, 0)); padding-bottom: 14px; top: 0; padding-top: calc(12px + env(safe-area-inset-top)); left: 0; right: 0; padding-left: 18px; padding-right: 10px; }
+.path-scroll { height: 100%; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+.path-map { display: block; max-width: 540px; margin: 0 auto; background: linear-gradient(#CDEBFA 0, #B7E0A0 120px, #9AD27A 100%); }
+.trail-edge { fill: none; stroke: #C9A574; stroke-width: 34; stroke-linecap: round; }
+.trail { fill: none; stroke: #E8CFA0; stroke-width: 26; stroke-linecap: round; stroke-dasharray: 2 14; }
+.deco { font-size: 30px; }
+.stop { cursor: pointer; }
+.stop .disc { fill: #fff; stroke: var(--line); stroke-width: 5; }
+.stop text { text-anchor: middle; font-weight: 700; fill: var(--ink); }
+.stop .big { font-size: 34px; } .stop .small { font-size: 18px; }
+.stop.later .disc { fill: #EEF2E6; stroke: #D7DDC9; } .stop.later text { fill: #A9B29A; }
+.stop.done .disc { fill: #FFF6E5; stroke: #FFC531; }
+.stop.now .disc { fill: #fff; stroke: var(--letters); stroke-width: 7; }
+.stop.k-words.now .disc, .stop.k-sight.now .disc, .stop.k-sentences.now .disc { stroke: var(--words); }
+.stop.k-numbers.now .disc { stroke: var(--numbers); }
+.stop .halo { fill: rgba(255, 255, 255, .7); transform-box: fill-box; transform-origin: center; animation: halo 1.4s ease-in-out infinite; }
+@keyframes halo { 50% { transform: scale(1.18); opacity: .35; } }
+.stop .stars { font-size: 15px; fill: #FFC531; } .stop .stars .off { fill: #E0D6BE; }
+.stop .gift { font-size: 24px; }
+.path-pal { cursor: pointer; }
+.stop-tag { font-size: 18px; font-weight: 700; color: var(--c); padding: 6px 12px; border-radius: 14px; border: 2px solid var(--line); min-width: 52px; text-align: center; }
+
+/* ----- writing without a guide ----- */
+.model { font-size: 64px; font-weight: 700; line-height: 1; background: var(--card); border-radius: 18px; padding: 4px 18px 12px; box-shadow: 0 4px 0 var(--line); color: var(--c); }
+.pad.blank { border-style: dashed; }
+
+/* ----- Pip's place: book, tabs, scenes ----- */
+.yard-pal { position: absolute; width: 40%; max-width: 190px; aspect-ratio: 220 / 224; transform: translate(-50%, -50%); touch-action: none; cursor: grab; z-index: 2; }
+.stk { z-index: 3; }
+.stk.wiggle { animation: wiggle .6s; }
+@keyframes wiggle { 20% { transform: translate(-50%, -50%) rotate(-14deg) scale(1.2); } 50% { transform: translate(-50%, -50%) rotate(12deg) scale(1.25); } 80% { transform: translate(-50%, -50%) rotate(-6deg) scale(1.1); } }
+.stk.ghost { position: fixed; z-index: 40; pointer-events: none; font-size: 54px; }
+.tabs { display: flex; gap: 8px; padding-top: 10px; }
+.tabs button { flex: 1; height: 48px; border-radius: 14px; background: var(--card); border: 3px solid var(--line); font-size: 24px; }
+.tabs button.on { border-color: var(--words); box-shadow: 0 3px 0 var(--words); }
+#tray { padding-top: 8px; min-height: 92px; align-items: stretch; }
+.book-cell { flex: none; width: 74px; background: var(--card); border-radius: 16px; border: 3px solid var(--line); display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 4px 2px; touch-action: pan-x; user-select: none; }
+.book-cell span { font-size: 38px; line-height: 1.1; }
+.book-cell small { font-size: 13px; font-weight: 700; color: var(--ink); text-align: center; line-height: 1.1; }
+.book-cell.fresh { border-color: #FFC531; box-shadow: 0 3px 0 #FFC531; }
+.tray-note { color: var(--soft); font-size: 16px; padding: 22px 8px; }
+.scene-prize { font-size: 110px; }

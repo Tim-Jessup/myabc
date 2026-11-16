@@ -16,7 +16,11 @@ const TRACE = (() => {
     spacing: 10,    // check points every this many pixels along a segment
     share: 0.5,     // share of a segment's check points that need ink nearby
     spur: 5,        // centre-line branches shorter than this are rendering noise
-    stray: 0.4      // share of ink allowed well away from the letter (stops scribbles passing)
+    stray: 0.4,     // share of ink allowed well away from the letter (stops scribbles passing)
+    rivalSlack: 0.4, // writing from memory: how much closer another letter may look before it fails
+    onLine: 0.1,    // writing from memory: ink within this share of the letter's size from its centre line is on it
+    tidy: 0.72,     // ...and at least this share of her ink must be
+    maxInk: 2.4     // ...and her ink can be at most this many times as long as the letter's line
   };
   let CFG = Object.assign({}, DEF);
   function config(c) { CFG = Object.assign({}, DEF, c); }
@@ -193,5 +197,96 @@ const TRACE = (() => {
     return { pass: strayOk && !missing.length, missing, unreached, progress: segs.length ? done / segs.length : 0, strayOk };
   }
 
-  return { analyse, judge, config, DEF, skeleton: (px, M) => thin(binary(px, M), M) };
+  /* ----- writing without a guide -----
+     Her letter can be any size and anywhere on the pad, so it is stretched to the size and
+     place of the real letter before the stroke check above. It also has to look more like
+     the letter she was asked for than like any other letter, so a backwards b (a d), a p
+     or an n doesn't pass for b. */
+  const glyphs = new Map();
+  function glyph(ch, M, draw) {
+    const key = ch + '|' + M;
+    if (glyphs.has(key)) return glyphs.get(key);
+    const mk = () => { const c = document.createElement('canvas'); c.width = c.height = M; return c.getContext('2d', { willReadFrequently: true }); };
+    const mc = mk(), tc = mk();
+    mc.fillStyle = tc.fillStyle = tc.strokeStyle = '#000';
+    draw(mc, M, ch); draw(tc, M, ch, M * 0.2);
+    const px = mc.getImageData(0, 0, M, M).data, tol = tc.getImageData(0, 0, M, M).data;
+    const sk = thin(binary(px, M), M), skel = [];
+    for (let i = 0; i < M * M; i++) if (sk[i]) skel.push({ x: i % M + 0.5, y: ((i / M) | 0) + 0.5 });
+    const box = boxOf(skel);
+    const g = { ch, px, tol, shape: analyse(px, M), skel, box };
+    glyphs.set(key, g);
+    return g;
+  }
+  function boxOf(pts) {
+    let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+    for (const p of pts) { if (p.x < x0) x0 = p.x; if (p.x > x1) x1 = p.x; if (p.y < y0) y0 = p.y; if (p.y > y1) y1 = p.y; }
+    return { x0, y0, x1, y1, w: Math.max(x1 - x0, 1), h: Math.max(y1 - y0, 1), cx: (x0 + x1) / 2, cy: (y0 + y1) / 2 };
+  }
+  // stretch her strokes onto the letter's box; thin letters (l, i, 1) keep their proportions
+  function fit(strokes, from, to) {
+    let sx = to.w / from.w, sy = to.h / from.h;
+    const thinTo = to.w / to.h < 0.45, thinFrom = from.w / from.h < 0.45;
+    const flatTo = to.h / to.w < 0.45, flatFrom = from.h / from.w < 0.45;
+    if (thinTo || thinFrom) sx = sy;
+    else if (flatTo || flatFrom) sy = sx;
+    else { const r = sx / sy; if (r > 2.2) sx = sy * 2.2; else if (r < 1 / 2.2) sy = sx * 2.2; }
+    return strokes.map(st => st.map(p => ({ x: to.cx + (p.x - from.cx) * sx, y: to.cy + (p.y - from.cy) * sy })));
+  }
+  function dense(strokes) { // points about every half pixel along her strokes
+    const out = [];
+    for (const st of strokes) {
+      out.push(st[0]);
+      for (let k = 1; k < st.length; k++) {
+        const a = st[k - 1], b = st[k], n = Math.ceil(Math.hypot(b.x - a.x, b.y - a.y) * 2);
+        for (let j = 1; j <= n; j++) out.push({ x: a.x + (b.x - a.x) * j / n, y: a.y + (b.y - a.y) * j / n });
+      }
+    }
+    return out;
+  }
+  const nearest = (p, pts) => { let d = 1e9; for (const q of pts) { const e = (p.x - q.x) * (p.x - q.x) + (p.y - q.y) * (p.y - q.y); if (e < d) d = e; } return Math.sqrt(d); };
+  function sample(pts, n) { if (pts.length <= n) return pts; const out = []; for (let k = 0; k < n; k++) out.push(pts[Math.floor(k * pts.length / n)]); return out; }
+  // how far apart her letter and a real letter are: average gap both ways (lower is closer)
+  function gap(strokes, g) {
+    const pts = sample(dense(fit(strokes, boxOf(dense(strokes)), g.box)), 160);
+    const sk = sample(g.skel, 160);
+    let a = 0, b = 0;
+    for (const p of pts) a += Math.min(nearest(p, sk), 12);
+    for (const q of sk) b += Math.min(nearest(q, pts), 12);
+    return a / pts.length + b / sk.length;
+  }
+  // strokes: arrays of {x, y} in mask pixels. rivals: the other letters it must look less like.
+  function written(strokes, ch, M, draw, rivals) {
+    strokes = strokes.filter(st => st.length);
+    if (!strokes.length) return { pass: false, progress: 0 };
+    const g = glyph(ch, M, draw);
+    const mapped = fit(strokes, boxOf(dense(strokes)), g.box);
+    const c = document.createElement('canvas'); c.width = c.height = M;
+    const x = c.getContext('2d', { willReadFrequently: true });
+    x.strokeStyle = x.fillStyle = '#000'; x.lineWidth = 2; x.lineCap = x.lineJoin = 'round';
+    for (const st of mapped) {
+      x.beginPath(); x.arc(st[0].x, st[0].y, 1.2, 0, 7); x.fill();
+      x.beginPath(); x.moveTo(st[0].x, st[0].y); st.forEach(p => x.lineTo(p.x, p.y)); x.stroke();
+    }
+    const r = judge(g.shape, x.getImageData(0, 0, M, M).data, g.tol);
+    // most of her ink has to lie along the letter's lines, so a scribble that fills the box fails
+    const mp = sample(dense(mapped), 200), sk = sample(g.skel, 200);
+    const near = CFG.onLine * Math.max(g.box.w, g.box.h); // relative to the letter's size: small letters fill their box
+    const tidy = mp.filter(q => nearest(q, sk) <= near).length / mp.length;
+    // ...and there can't be far more ink than the letter has line (a scribble does)
+    let len = 0;
+    for (const st of mapped) for (let k = 1; k < st.length; k++) len += Math.hypot(st[k].x - st[k - 1].x, st[k].y - st[k - 1].y);
+    const amount = len / g.skel.length;
+    const mine = gap(strokes, g);
+    let best = Infinity, like = null;
+    for (const o of rivals) {
+      if (o === ch) continue;
+      const d = gap(strokes, glyph(o, M, draw));
+      if (d < best) { best = d; like = o; }
+    }
+    const closest = mine <= best + CFG.rivalSlack;
+    return { pass: r.pass && closest && tidy >= CFG.tidy && amount <= CFG.maxInk, parts: r.pass, closest, tidy, amount, mine, best, like, progress: r.progress };
+  }
+
+  return { analyse, judge, config, DEF, written, glyph, skeleton: (px, M) => thin(binary(px, M), M) };
 })();

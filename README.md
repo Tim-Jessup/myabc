@@ -12,6 +12,22 @@ Reading and writing games for little learners. A small installable web app: no a
 
 The app checks for a new version when it opens and whenever it comes back to the front, and reloads itself on the home screen. There is also a **Check for updates** button on the grown-ups page.
 
+## Pip's path
+
+The app opens on Pip's path: a trail of stops in the order letters are usually taught in Australian schools (s a t p i n m d g o c k e u r h b f l j v w x y z q).
+
+- **Letter stops** mix a few activities around one letter: find it, match big and little, hear what starts with it, and write it.
+- **Word stops** come every few letters and only use letters met so far (pin, tap, ant after the first six).
+- **Number stops** and **words-to-know stops** come in between, and the path ends with sentences.
+- **Writing** each letter moves from tracing, to copying it from a model, to writing it from memory, as she manages each one without help. Each stop also reviews a letter she has found tricky.
+- Every stop wins a sticker. Every fifth stop wins something bigger: a new hat, a new colour for Pip, or a new background for Pip's place.
+
+Free play (🌳) still has every game at any level. The grown-ups page shows where she is on the path, can move her forward or back, and lists which letters she copies or writes from memory.
+
+## Pip's place
+
+Stickers live in a sticker book along the bottom, with their names written underneath. Drag one up into the yard, drag it back down to put it away, or tidy everything up with the basket. Tap a sticker and it wiggles while Pip says its name. Food stickers can be fed to Pip. Pip can be moved around, and wears the hats, colours and backgrounds won on the path.
+
 ## The games
 
 | Section | Game | Levels |
@@ -27,7 +43,8 @@ The app checks for a new version when it opens and whenever it comes back to the
 | Words | Build the word | exact letters, extra letters, longer words |
 | Words | Make a sentence | three words, longer |
 | Writing | Trace letters | small letters, capitals |
-| Writing | Trace numbers | 0–9 |
+| Writing | Write letters | copy small letters, small letters from memory, copy capitals, capitals from memory |
+| Writing | Write numbers | trace, copy, from memory |
 | Writing | Write words | short words, longer words |
 
 Wrong answers just fade out; there is no "fail".

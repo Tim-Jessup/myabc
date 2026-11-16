@@ -239,6 +239,11 @@
   const itemStat = (id, key) => store.items[id + '|' + key] || [0, 0];
   function choose(id, pool, keyOf = x => String(x)) {
     const used = run.used;
+    if (run.force != null) { // the path asks for a particular letter or word
+      const f = pool.find(x => keyOf(x) === String(run.force));
+      run.force = null;
+      if (f !== undefined) { used.add(keyOf(f)); return f; }
+    }
     let cands = pool.filter(x => !used.has(keyOf(x)));
     if (!cands.length) { used.clear(); cands = pool; }
     const w = cands.map(x => { const [seen, missed] = itemStat(id, keyOf(x)); return 1 + 3 * missed / (seen + 1) + (seen ? 0 : 0.5); });
@@ -255,7 +260,7 @@
   const SOUND_ALIKE = { c: ['k', 'q', 's'], k: ['c', 'q'], q: ['c', 'k'], s: ['c', 'z'], z: ['s'], j: ['g'], g: ['j'], i: ['e', 'y'], e: ['i'], u: ['a', 'o', 'y'], y: ['u', 'i', 'w'], w: ['y'], a: ['u'], o: ['u'], f: ['v'], v: ['f'] };
   const startLetters = Object.keys(D.START);
   // The first question of a round sets the scene; after that the prompt is short.
-  const intro = (id, again) => (run.i === 0 ? [LINES.intro[id]].concat(again) : again);
+  const intro = (id, again) => (run.i !== 0 ? again : run.items ? [LINES.path.go].concat(again) : [LINES.intro[id]].concat(again));
 
   const SECTIONS = [
     { id: 'letters', name: 'Letters' },
@@ -452,17 +457,15 @@
       levels: ['Small letters', 'Capitals'],
       make(lv) {
         const t = choose(this.id + lv, lv === 0 ? D.LOWER : D.UPPER);
-        const again = LINES.traceLetter(t.toUpperCase());
-        return { type: 'trace', key: t, glyphs: [t], again, say: intro(this.id, again) };
+        return writeQ(t, 'trace', this.id);
       }
     },
     {
-      id: 'traceNumbers', sec: 'writing', icon: '5', name: 'Trace numbers', n: 6,
-      levels: ['0 to 9'],
+      id: 'traceNumbers', sec: 'writing', icon: '5', name: 'Write numbers', n: 6,
+      levels: ['Trace 0 to 9', 'Copy 0 to 9', '0 to 9 from memory'],
       make(lv) {
         const t = choose(this.id + lv, '0123456789'.split(''));
-        const again = LINES.traceNumber(t);
-        return { type: 'trace', key: t, glyphs: [t], again, say: intro(this.id, again) };
+        return writeQ(t, ['trace', 'copy', 'recall'][lv], this.id);
       }
     },
     {
@@ -475,6 +478,23 @@
       }
     }
   ];
+  // writing a letter or number: trace it, copy it from a model, or write it from memory
+  function writeQ(t, mode, gameId) {
+    const T = String(t).toUpperCase(), digit = /\d/.test(t);
+    let again;
+    if (mode === 'trace') again = digit ? LINES.traceNumber(t) : LINES.traceLetter(T);
+    else if (mode === 'copy') again = digit ? LINES.copyNumber(t) : LINES.copyLetter(T);
+    else again = digit ? LINES.writeNumber(t) : t === T ? LINES.writeBig(T) : LINES.writeLittle(T);
+    return { type: 'trace', mode, key: String(t), glyphs: [String(t)], again, say: intro(gameId, again) };
+  }
+  GAMES.splice(GAMES.findIndex(g => g.id === 'traceNumbers'), 0, {
+    id: 'writeLetters', sec: 'writing', icon: '✍️', name: 'Write letters', n: 6,
+    levels: ['Copy small letters', 'Small letters from memory', 'Copy capitals', 'Capitals from memory'],
+    make(lv) {
+      const t = choose(this.id + lv, lv >= 2 ? D.UPPER : D.LOWER);
+      return writeQ(t, lv % 2 === 0 ? 'copy' : 'recall', this.id);
+    }
+  });
   const byId = Object.fromEntries(GAMES.map(g => [g.id, g]));
   const gstat = id => (store.games[id] = store.games[id] || { level: 0, rounds: [] });
 
@@ -548,7 +568,10 @@
     </svg>`;
   }
 
-  function home() {
+  let hub = 'path';
+  function home() { if (hub === 'world') world(); else pathScreen(); }
+
+  function world() {
     runId++;
     hush();
     const id = runId;
@@ -557,6 +580,7 @@
         <header class="hud">
           <h1>My <b>A</b><b>B</b><b>C</b></h1>
           <div class="home-btns">
+            <button class="chip" id="topath" aria-label="Pip's path">🗺</button>
             <button class="chip" id="place" aria-label="${esc(N())}'s place">🏡 <span>${store.stickers.length}</span></button>
             <button class="chip quiet" id="grown" aria-label="Grown-ups (hold)">⚙</button>
           </div>
@@ -574,11 +598,8 @@
       else { tap(); place(); }
     };
     $app.querySelector('#place').onclick = () => { tap(); place(); };
-    const g = $app.querySelector('#grown');
-    let timer = null;
-    g.onpointerdown = () => { timer = setTimeout(() => { timer = null; grownups(); }, 650); };
-    g.onpointerup = g.onpointerleave = () => { if (timer) { clearTimeout(timer); timer = null; } };
-    g.oncontextmenu = e => e.preventDefault();
+    $app.querySelector('#topath').onclick = () => { tap(); hub = 'path'; pathScreen(); };
+    holdForGrownups($app.querySelector('#grown'));
     if (awake) restSoon();
     if (updateReady) applyUpdate(); else autoUpdate();
   }
@@ -605,62 +626,344 @@
   window.addEventListener('popstate', () => { closeSheets(); stopMic(); home(); });
   const goHome = () => { if (history.state && history.state.in) history.back(); else home(); };
 
-  /* ---------- Pip's place: stickers, hats, colours ---------- */
+  /* ---------- Pip's path ----------
+     Stops in the order letters are taught. Each stop mixes a few activities around one
+     letter (find it, hear it, write it), with word stops that only use letters met so far,
+     and number and "words to know" stops in between. */
+  const PATH = (() => {
+    const stops = [], known = [];
+    let num = 0, sight = 0;
+    D.ORDER.forEach((l, i) => {
+      known.push(l);
+      stops.push({ kind: 'letter', letter: l, known: known.slice() });
+      const n = i + 1;
+      if (n >= 6 && n % 3 === 0) stops.push({ kind: 'words', known: known.slice() });
+      if (n % 5 === 2 && num < 3) stops.push({ kind: 'numbers', set: num++ });
+      if (n >= 12 && n % 6 === 0 && sight < 3) stops.push({ kind: 'sight', set: sight++ });
+    });
+    stops.push({ kind: 'words', known: known.slice() });
+    stops.push({ kind: 'sentences', set: 0 }, { kind: 'sentences', set: 1 });
+    return stops;
+  })();
+  const pathState = () => (store.path = Object.assign({ at: 0, done: {}, stars: {} }, store.path || {}));
+  const stopLabel = st => ({ letter: st.letter, words: 'cat', numbers: '123', sight: 'the', sentences: 'I see' }[st.kind]);
+  const isMilestone = i => (i + 1) % 5 === 0;
+
+  // the letter she has found hardest so far, among those she has met
+  function trickiest(known) {
+    let best = null, bestScore = -Infinity;
+    for (const l of known) {
+      let seen = 0, missed = 0;
+      for (const [k, v] of Object.entries(store.items)) if (k.endsWith('|' + l) || k.endsWith('|' + l.toUpperCase())) { seen += v[0]; missed += v[1]; }
+      const score = (missed + 0.5) / (seen + 1) + Math.random() * 0.3 - (l === pathState().lastReview ? 1 : 0); // not the same one twice running
+      if (score > bestScore) { bestScore = score; best = l; }
+    }
+    pathState().lastReview = best;
+    return best;
+  }
+  const writeStage = t => (store.write || {})[t] || 0;
+  function writeItem(t, review) {
+    const stage = writeStage(t), digit = /\d/.test(t);
+    if (digit) return { g: byId.traceNumbers, lv: stage, force: t };
+    const up = t === t.toUpperCase();
+    if (stage === 0 && !review) return { g: byId.traceLetters, lv: up ? 1 : 0, force: t };
+    // traced it once: copy it next time; copied it cleanly: write it from memory
+    return { g: byId.writeLetters, lv: (up ? 2 : 0) + (stage >= 2 ? 1 : 0), force: t };
+  }
+  function stopItems(i) {
+    const st = PATH[i], lv = id => gstat(id).level;
+    const ps = pathState(), quick = ps.quick; // she aced the last stop: a shorter one
+    const It = (id, force, l) => ({ g: byId[id], lv: l == null ? Math.min(lv(id), byId[id].levels.length - 1) : l, force });
+    const items = [];
+    if (st.kind === 'letter') {
+      const L = st.letter, earlier = st.known.filter(x => x !== L);
+      items.push(It('findLetter', L, Math.max(1, lv('findLetter'))));
+      if (!quick) items.push(It('matchCase', L, i % 2));
+      if (D.START[L]) {
+        items.push(It('soundPic', L));
+        if (!quick) items.push(It('firstSound', L, Math.min(lv('firstSound'), 1)));
+      }
+      items.push(writeItem(L));
+      if (earlier.length) {
+        const r = trickiest(earlier);
+        items.push(writeStage(r) >= 1 ? writeItem(r, true) : It('findLetter', r, 1));
+      }
+    } else if (st.kind === 'words') {
+      const words = shuffle(D.CVC.filter(([w]) => [...w].every(c => st.known.includes(c))).map(x => x[0]));
+      const rl = Math.min(lv('readWord'), 1);
+      words.slice(0, 2).forEach(w => items.push(It('readWord', w, rl)));
+      if (words[2]) items.push(It('buildWord', words[2], Math.min(lv('buildWord'), 1)));
+      if (words[3]) items.push(It('firstSound', words[3], 2));
+      items.push(writeItem(trickiest(st.known), true));
+    } else if (st.kind === 'numbers') {
+      const [lo, hi] = [[1, 5], [1, 10], [6, 20]][st.set];
+      const pick = () => lo + rnd(hi - lo + 1);
+      items.push(It('count', pick(), st.set), It('count', pick(), st.set));
+      items.push(It('findNumber', pick(), Math.min(st.set, 2)), It('findNumber', pick(), Math.min(st.set, 2)));
+      items.push(writeItem(String(rnd(10))));
+    } else if (st.kind === 'sight') {
+      shuffle(D.SIGHT[st.set]).slice(0, 3).forEach(w => items.push(It('sightWords', w, st.set)));
+      items.push(It('readWord', null, Math.min(lv('readWord'), 1)), It('buildWord', null, Math.min(lv('buildWord'), 1)));
+    } else {
+      items.push(It('sentence', null, st.set), It('sentence', null, st.set), It('sightWords', null, 2), It('readWord', null, 2));
+      items.push(writeItem(trickiest(D.ORDER), true));
+    }
+    return items;
+  }
+
+  function startStop(i) {
+    const items = stopItems(i);
+    clearTimeout(sleepTimer);
+    awake = true;
+    pushNav();
+    run = { path: i, items, g: items[0].g, level: items[0].lv, i: 0, n: items.length, first: 0, used: new Set(), id: ++runId, marks: [] };
+    nextQ();
+  }
+
+  function pathScreen() {
+    runId++;
+    hush();
+    const ps = pathState(), id = runId;
+    const GAP = 104, TOP = 150, W = 400;
+    const pos = i => ({ x: 200 + 112 * Math.sin(i * 0.95), y: TOP + i * GAP });
+    const H = TOP + PATH.length * GAP + 40;
+    let d = '';
+    PATH.forEach((_, i) => {
+      const p = pos(i);
+      if (!i) d = `M${p.x} ${p.y}`;
+      else { const a = pos(i - 1); d += ` C${a.x} ${a.y + GAP * 0.55} ${p.x} ${p.y - GAP * 0.55} ${p.x} ${p.y}`; }
+    });
+    const deco = ['🌳', '🌿', '🌼', '🍄', '🌳', '🪨', '🌸', '🌲'];
+    const decor = PATH.map((_, i) => { const p = pos(i); const x = p.x > 200 ? p.x - 150 - (i % 3) * 12 : p.x + 120 + (i % 2) * 14; return `<text x="${x}" y="${p.y + 10}" class="deco">${deco[i % deco.length]}</text>`; }).join('');
+    const nodes = PATH.map((st, i) => {
+      const p = pos(i), state = ps.done[i] ? 'done' : i === ps.at ? 'now' : i < ps.at ? 'done' : 'later';
+      const stars = ps.stars[i] || 0;
+      return `<g class="stop ${state} k-${st.kind}" data-i="${i}" transform="translate(${p.x} ${p.y})">
+        ${state === 'now' ? '<circle r="44" class="halo"/>' : ''}
+        <circle r="34" class="disc"/>
+        <text y="${st.kind === 'letter' ? 11 : 8}" class="${st.kind === 'letter' ? 'big' : 'small'}">${esc(stopLabel(st))}</text>
+        ${state === 'done' ? `<text y="58" class="stars">${'★'.repeat(stars)}<tspan class="off">${'★'.repeat(3 - stars)}</tspan></text>` : ''}
+        ${isMilestone(i) && !ps.done[i] ? '<text x="34" y="-22" class="gift">🎁</text>' : ''}
+      </g>`;
+    }).join('');
+    const pp = pos(ps.at);
+    const pipX = pp.x > 200 ? pp.x - 118 : pp.x + 40;
+    $app.innerHTML = `
+      <div class="screen path-screen">
+        <header class="hud path-hud">
+          <h1>My <b>A</b><b>B</b><b>C</b></h1>
+          <div class="home-btns">
+            <button class="chip" id="world" aria-label="Play anything">🌳</button>
+            <button class="chip" id="place" aria-label="${esc(N())}'s place">🏡 <span>${store.stickers.length}</span></button>
+            <button class="chip quiet" id="grown" aria-label="Grown-ups (hold)">⚙</button>
+          </div>
+        </header>
+        <div class="path-scroll" id="ps">
+          <svg class="path-map" viewBox="0 0 ${W} ${H}" width="100%" style="aspect-ratio:${W}/${H}">
+            <path d="${d}" class="trail-edge"/><path d="${d}" class="trail"/>
+            ${decor}${nodes}
+            <g class="path-pal" id="ppal" transform="translate(${pipX} ${pp.y - 56})">
+              <svg width="80" height="82" viewBox="${PAL.BOX}" overflow="visible">${PAL.g(store.pal, 'idle')}</svg>
+            </g>
+          </svg>
+        </div>
+      </div>`;
+    const sc = $app.querySelector('#ps');
+    requestAnimationFrame(() => { const r = sc.querySelector('.stop.now') || sc.querySelector('.stop'); if (r) r.scrollIntoView({ block: 'center' }); });
+    sc.querySelectorAll('.stop').forEach(g => g.onclick = () => {
+      const i = +g.dataset.i;
+      if (i <= ps.at) { tap(); startStop(i); }
+      else { boop(); say(LINES.path.locked); }
+    });
+    $app.querySelector('#ppal').onclick = () => { pipTune(); palState('happy', 1300); say(N() === 'Pip' ? LINES.hello : [LINES.hello[0], `I'm ${N()}.`, LINES.hello[2]]); };
+    $app.querySelector('#world').onclick = () => { tap(); hub = 'world'; world(); };
+    $app.querySelector('#place').onclick = () => { tap(); place(); };
+    holdForGrownups($app.querySelector('#grown'));
+    if (updateReady) applyUpdate(); else autoUpdate();
+    if (!alive(id)) return;
+  }
+
+  function holdForGrownups(g) {
+    let timer = null;
+    g.onpointerdown = () => { timer = setTimeout(() => { timer = null; grownups(); }, 650); };
+    g.onpointerup = g.onpointerleave = () => { if (timer) { clearTimeout(timer); timer = null; } };
+    g.oncontextmenu = e => e.preventDefault();
+  }
+
+  /* ---------- Pip's place ----------
+     Stickers live in a sticker book along the bottom: drag one up into the yard, drag it
+     back down to put it away, or tidy everything up. Tap a sticker and it wiggles while
+     Pip says its name; feed Pip the food ones. Pip can be moved around, and wears the hats,
+     colours and backgrounds won along the path. */
+  const SCENES = {
+    garden: `<rect width="100" height="100" fill="#CDEBFA"/><circle cx="68" cy="14" r="6" fill="#FFD35A"/>
+      <path d="M0 34 Q 30 22 55 32 T 100 28 V 100 H 0 Z" fill="#B7E0A0"/><path d="M0 50 Q 40 42 70 49 T 100 47 V 100 H 0 Z" fill="#9AD27A"/>
+      <path d="M0 90 Q 30 84 60 90 T 100 88 V 100 H 0 Z" fill="#7CC8EE"/>`,
+    beach: `<rect width="100" height="100" fill="#BDE7F7"/><circle cx="32" cy="14" r="7" fill="#FFD35A"/>
+      <rect y="38" width="100" height="22" fill="#4FB3D9"/><path d="M0 40 q 6 -3 12 0 t 12 0 t 12 0 t 12 0 t 12 0 t 12 0 t 12 0 t 12 0 t 12 0" fill="none" stroke="#fff" stroke-width="1.2"/>
+      <path d="M0 58 Q 30 52 60 57 T 100 55 V 100 H 0 Z" fill="#F3D9A4"/>`,
+    night: `<rect width="100" height="100" fill="#22305E"/><circle cx="66" cy="16" r="7" fill="#FFF3C4"/><circle cx="69" cy="14" r="6" fill="#22305E"/>
+      <g fill="#FFF3C4"><circle cx="26" cy="10" r=".8"/><circle cx="34" cy="22" r=".6"/><circle cx="48" cy="8" r=".9"/><circle cx="58" cy="26" r=".6"/><circle cx="74" cy="32" r=".7"/><circle cx="28" cy="34" r=".5"/><circle cx="40" cy="15" r=".5"/></g>
+      <path d="M0 50 Q 40 40 70 48 T 100 46 V 100 H 0 Z" fill="#2E5E4E"/><path d="M0 70 Q 30 64 60 70 T 100 68 V 100 H 0 Z" fill="#244B3E"/>`,
+    snow: `<rect width="100" height="100" fill="#DCEBF6"/><path d="M0 40 L 20 22 L 34 36 L 52 16 L 74 38 L 88 26 L 100 36 V 100 H 0 Z" fill="#B8CCE0"/>
+      <path d="M0 52 Q 40 44 70 51 T 100 49 V 100 H 0 Z" fill="#FFFFFF"/><g fill="#fff"><circle cx="26" cy="12" r="1"/><circle cx="40" cy="8" r="1.2"/><circle cx="58" cy="14" r=".9"/><circle cx="72" cy="9" r="1.1"/></g>`,
+    creek: `<rect width="100" height="100" fill="#D5EEF7"/><path d="M0 30 Q 25 20 50 28 T 100 24 V 100 H 0 Z" fill="#A9D68E"/>
+      <path d="M100 40 C 70 42 72 58 50 62 C 28 66 30 84 0 88 V 100 H 100 Z" fill="#6FBFE6"/><path d="M100 40 C 70 42 72 58 50 62 C 28 66 30 84 0 88" fill="none" stroke="#9AD27A" stroke-width="2"/>
+      <g fill="#9C9C9C"><ellipse cx="62" cy="64" rx="4" ry="2"/><ellipse cx="30" cy="80" rx="5" ry="2.2"/></g>`
+  };
+  const SCENE_ICON = { garden: '🌳', beach: '🏖️', night: '🌙', snow: '❄️', creek: '🏞️' };
+
   function place() {
     pushNav();
     runId++;
     const p = store.pal;
-    const draw = () => {
-      $app.querySelector('#yp').innerHTML = PAL.svg(p, 'idle');
-      $app.querySelector('#hats').innerHTML = `<button data-h="" class="${p.hat ? '' : 'on'}">🚫</button>` +
-        PAL.HATS.map(h => (p.hats.includes(h) ? `<button data-h="${h}" class="${p.hat === h ? 'on' : ''}">${h}</button>` : '<button class="locked" disabled>?</button>')).join('');
-      $app.querySelector('#cols').innerHTML = Object.keys(PAL.COLORS).map(c => (p.colors.includes(c)
-        ? `<button data-c="${c}" class="${p.color === c ? 'on' : ''}"><i style="background:${PAL.COLORS[c].body}"></i></button>`
-        : '<button class="locked" disabled>?</button>')).join('');
-    };
+    p.scenes = p.scenes || ['garden'];
+    p.scene = p.scene || 'garden';
+    p.pos = p.pos || { x: 0.5, y: 0.56 };
+    store.stickers.forEach(st => { if (st.out === undefined) st.out = false; }); // older stickers start in the book
+    let tab = 'book';
     $app.innerHTML = `
       <div class="screen place">
-        <div class="bar"><button class="round" id="x" aria-label="Back">←</button><h2>${esc(N())}'s place</h2><span></span></div>
+        <div class="bar"><button class="round" id="x" aria-label="Back">←</button><h2>${esc(N())}'s place</h2><button class="round" id="tidy" aria-label="Tidy up">🧺</button></div>
         <div class="yard" id="yard">
-          <svg class="yard-bg" viewBox="0 0 100 100" preserveAspectRatio="none">
-            <rect width="100" height="100" fill="#CDEBFA"/>
-            <path d="M0 34 Q 30 22 55 32 T 100 28 V 100 H 0 Z" fill="#B7E0A0"/>
-            <path d="M0 50 Q 40 42 70 49 T 100 47 V 100 H 0 Z" fill="#9AD27A"/>
-            <path d="M0 90 Q 30 84 60 90 T 100 88 V 100 H 0 Z" fill="#7CC8EE"/>
-          </svg>
-          <button class="yard-pal" id="yp" aria-label="${esc(N())}"></button>
-          ${store.stickers.map((s, i) => `<span class="stk" data-i="${i}" style="left:${s.x * 100}%;top:${s.y * 100}%">${s.e}</span>`).join('')}
-          ${store.stickers.length ? '' : '<p class="yard-empty">Finish a game to win things for this place!</p>'}
+          <svg class="yard-bg" viewBox="0 0 100 100" preserveAspectRatio="xMidYMid slice">${SCENES[p.scene]}</svg>
+          <div class="yard-pal" id="yp" aria-label="${esc(N())}"></div>
         </div>
-        <div class="tray">
-          <div class="tray-row" id="hats"></div>
-          <div class="tray-row" id="cols"></div>
+        <div class="tabs">
+          <button data-t="book" class="on">📖</button><button data-t="hats">🎩</button><button data-t="cols">🎨</button><button data-t="scenes">🖼️</button>
         </div>
+        <div class="tray-row" id="tray"></div>
       </div>`;
-    draw();
+    const yard = $app.querySelector('#yard'), tray = $app.querySelector('#tray'), yp = $app.querySelector('#yp');
+    const name = e => D.STICKER_NAMES[e] || 'sticker';
+    const placeYP = () => { yp.style.left = p.pos.x * 100 + '%'; yp.style.top = p.pos.y * 100 + '%'; yp.innerHTML = PAL.svg(p, 'idle'); };
+    const overPip = (cx, cy) => { const r = yp.getBoundingClientRect(); return cx > r.left && cx < r.right && cy > r.top && cy < r.bottom; };
+    const overYard = (cx, cy) => { const r = yard.getBoundingClientRect(); return cx > r.left && cx < r.right && cy > r.top && cy < r.bottom; };
+    const yardXY = (cx, cy) => { const r = yard.getBoundingClientRect(); return { x: clamp((cx - r.left) / r.width, 0.06, 0.94), y: clamp((cy - r.top) / r.height, 0.06, 0.94) }; };
+    async function feed(st) {
+      st.out = false; st.fresh = false; save();
+      palState('eat', 900); chomp();
+      await wait(450);
+      palState('happy', 1200);
+      say(one(D.YUM));
+      drawYard(); drawTray();
+    }
+
+    function drawYard() {
+      yard.querySelectorAll('.stk').forEach(el => el.remove());
+      store.stickers.forEach((st, i) => {
+        if (!st.out) return;
+        const el = document.createElement('span');
+        el.className = 'stk'; el.textContent = st.e;
+        el.style.left = st.x * 100 + '%'; el.style.top = st.y * 100 + '%';
+        yard.appendChild(el);
+        let down = null, moved = false;
+        el.onpointerdown = e => { down = { x: e.clientX, y: e.clientY }; moved = false; try { el.setPointerCapture(e.pointerId); } catch (err) { /* ok */ } };
+        el.onpointermove = e => {
+          if (!down) return;
+          if (!moved && Math.hypot(e.clientX - down.x, e.clientY - down.y) < 8) return;
+          if (!moved) { moved = true; el.classList.add('drag'); tap(); }
+          const r = yard.getBoundingClientRect();
+          el.style.left = (e.clientX - r.left) / r.width * 100 + '%'; el.style.top = (e.clientY - r.top) / r.height * 100 + '%';
+        };
+        el.onpointerup = e => {
+          if (!down) return;
+          down = null; el.classList.remove('drag');
+          if (!moved) { // a tap: wiggle and say its name
+            el.classList.remove('wiggle'); void el.offsetWidth; el.classList.add('wiggle');
+            tone([660, 880, 990], 0.08, 'triangle', 0.1);
+            say(LINES.sticker(name(st.e)));
+            return;
+          }
+          if (D.FOOD.includes(st.e) && overPip(e.clientX, e.clientY)) return feed(st);
+          if (!overYard(e.clientX, e.clientY)) { st.out = false; save(); drawYard(); drawTray(); return; } // back in the book
+          Object.assign(st, yardXY(e.clientX, e.clientY)); save();
+        };
+        el.onpointercancel = () => { down = null; el.classList.remove('drag'); drawYard(); };
+      });
+      const empty = !store.stickers.some(st => st.out);
+      yard.classList.toggle('empty', empty);
+    }
+
+    function drawTray() {
+      $app.querySelectorAll('.tabs button').forEach(b => b.classList.toggle('on', b.dataset.t === tab));
+      if (tab === 'book') {
+        const inBook = store.stickers.map((st, i) => [st, i]).filter(([st]) => !st.out);
+        tray.innerHTML = inBook.length
+          ? inBook.map(([st, i]) => `<div class="book-cell ${st.fresh ? 'fresh' : ''}" data-i="${i}"><span>${st.e}</span><small>${esc(name(st.e))}</small></div>`).join('')
+          : `<p class="tray-note">${store.stickers.length ? 'All your stickers are out!' : 'Finish a stop on the path to win stickers!'}</p>`;
+        tray.querySelectorAll('.book-cell').forEach(cell => dragFromBook(cell, store.stickers[+cell.dataset.i]));
+      } else if (tab === 'hats') {
+        tray.innerHTML = `<button data-h="" class="${p.hat ? '' : 'on'}">🚫</button>` +
+          PAL.HATS.map(h => (p.hats.includes(h) ? `<button data-h="${h}" class="${p.hat === h ? 'on' : ''}">${h}</button>` : '<button class="locked" disabled>?</button>')).join('');
+      } else if (tab === 'cols') {
+        tray.innerHTML = Object.keys(PAL.COLORS).map(c => (p.colors.includes(c)
+          ? `<button data-c="${c}" class="${p.color === c ? 'on' : ''}"><i style="background:${PAL.COLORS[c].body}"></i></button>`
+          : '<button class="locked" disabled>?</button>')).join('');
+      } else {
+        tray.innerHTML = Object.keys(SCENES).map(sc => (p.scenes.includes(sc)
+          ? `<button data-s="${sc}" class="${p.scene === sc ? 'on' : ''}">${SCENE_ICON[sc]}</button>`
+          : '<button class="locked" disabled>?</button>')).join('');
+      }
+    }
+
+    // drag a sticker up out of the book (sideways still scrolls the book)
+    function dragFromBook(cell, st) {
+      let down = null, ghost = null;
+      cell.onpointerdown = e => { down = { x: e.clientX, y: e.clientY, id: e.pointerId }; try { cell.setPointerCapture(e.pointerId); } catch (err) { /* ok */ } };
+      cell.onpointermove = e => {
+        if (!down) return;
+        if (!ghost) {
+          if (down.y - e.clientY < 12 || Math.abs(e.clientX - down.x) > down.y - e.clientY) return;
+          ghost = document.createElement('span');
+          ghost.className = 'stk drag ghost'; ghost.textContent = st.e;
+          document.body.appendChild(ghost); tap();
+        }
+        ghost.style.left = e.clientX + 'px'; ghost.style.top = e.clientY + 'px';
+      };
+      const end = e => {
+        if (!down) return;
+        const wasDrag = !!ghost;
+        down = null;
+        if (ghost) { ghost.remove(); ghost = null; }
+        if (!wasDrag) { say(LINES.sticker(name(st.e))); return; }
+        if (D.FOOD.includes(st.e) && overPip(e.clientX, e.clientY)) return feed(st);
+        if (overYard(e.clientX, e.clientY)) { Object.assign(st, yardXY(e.clientX, e.clientY), { out: true, fresh: false }); save(); drawYard(); drawTray(); }
+      };
+      cell.onpointerup = end;
+      cell.onpointercancel = () => { down = null; if (ghost) { ghost.remove(); ghost = null; } };
+    }
+
+    // Pip: tap for a hello, drag to move
+    let pdown = null, pmoved = false;
+    yp.onpointerdown = e => { pdown = { x: e.clientX, y: e.clientY }; pmoved = false; try { yp.setPointerCapture(e.pointerId); } catch (err) { /* ok */ } };
+    yp.onpointermove = e => {
+      if (!pdown) return;
+      if (!pmoved && Math.hypot(e.clientX - pdown.x, e.clientY - pdown.y) < 8) return;
+      pmoved = true;
+      Object.assign(p.pos, yardXY(e.clientX, e.clientY));
+      yp.style.left = p.pos.x * 100 + '%'; yp.style.top = p.pos.y * 100 + '%';
+    };
+    yp.onpointerup = () => {
+      if (!pdown) return;
+      pdown = null;
+      if (pmoved) save(); else { pipTune(); palState('happy', 1300); say(LINES.hello[0]); }
+    };
+
     $app.querySelector('#x').onclick = goHome;
-    $app.querySelector('#yp').onclick = () => { pipTune(); palState('happy', 1300); };
-    $app.querySelector('.tray').onclick = e => {
+    $app.querySelector('#tidy').onclick = () => { store.stickers.forEach(st => { st.out = false; }); save(); drawYard(); tab = 'book'; drawTray(); chime(); say(LINES.tidy); };
+    $app.querySelector('.tabs').onclick = e => { const b = e.target.closest('button'); if (b) { tab = b.dataset.t; tap(); drawTray(); } };
+    tray.onclick = e => {
       const b = e.target.closest('button');
       if (!b || b.disabled) return;
       if (b.dataset.h !== undefined) p.hat = b.dataset.h || null;
       if (b.dataset.c) p.color = b.dataset.c;
-      save(); draw(); chime(); palState('happy', 1100);
+      if (b.dataset.s) { p.scene = b.dataset.s; yard.querySelector('.yard-bg').innerHTML = SCENES[p.scene]; }
+      save(); placeYP(); drawTray(); chime(); palState('happy', 1100);
     };
-    const yard = $app.querySelector('#yard');
-    yard.querySelectorAll('.stk').forEach(el => {
-      const s = store.stickers[+el.dataset.i];
-      let held = false;
-      el.onpointerdown = e => { held = true; try { el.setPointerCapture(e.pointerId); } catch (err) { /* ok */ } el.classList.add('drag'); tap(); };
-      el.onpointermove = e => {
-        if (!held) return;
-        const r = yard.getBoundingClientRect();
-        s.x = clamp((e.clientX - r.left) / r.width, 0.06, 0.94);
-        s.y = clamp((e.clientY - r.top) / r.height, 0.06, 0.94);
-        el.style.left = s.x * 100 + '%'; el.style.top = s.y * 100 + '%';
-      };
-      el.onpointerup = el.onpointercancel = () => { if (held) { held = false; el.classList.remove('drag'); save(); } };
-    });
+    placeYP(); drawYard(); drawTray();
+    // new stickers stop being "new" once she has seen the book
+    setTimeout(() => { store.stickers.forEach(st => { st.fresh = false; }); save(); }, 4000);
   }
 
   /* ---------- running a round ---------- */
@@ -683,12 +986,13 @@
         <div class="bar">
           <button class="round" id="x" aria-label="Home">✕</button>
           <div class="dots">${dots}</div>
-          <button class="lvl" id="lvl" aria-label="Change level">Level ${level + 1}</button>
+          ${run.items ? `<span class="stop-tag">${esc(stopLabel(PATH[run.path]))}</span>` : `<button class="lvl" id="lvl" aria-label="Change level">Level ${level + 1}</button>`}
         </div>
         ${body}
       </div>`;
     $app.querySelector('#x').onclick = goHome;
-    $app.querySelector('#lvl').onclick = levelSheet;
+    const lvlBtn = $app.querySelector('#lvl');
+    if (lvlBtn) lvlBtn.onclick = levelSheet;
   }
 
   function levelSheet() {
@@ -711,7 +1015,11 @@
   }
 
   function nextQ() {
-    if (run.i >= run.n) return finish();
+    if (run.i >= run.n) return run.items ? finishStop() : finish();
+    if (run.items) {
+      const it = run.items[run.i];
+      run.g = it.g; run.level = it.lv; run.force = it.force;
+    }
     const q = run.g.make(run.level);
     run.q = q;
     run.clean = true;
@@ -731,6 +1039,10 @@
     const id = run.id;
     const st = (store.items[run.g.id + run.level + '|' + q.key] = itemStat(run.g.id + run.level, q.key));
     st[0]++; if (!run.clean) st[1]++;
+    if (q.type === 'trace' && q.glyphs.length === 1 && run.clean) {
+      const w = (store.write = store.write || {});
+      w[q.key] = Math.max(w[q.key] || 0, Math.min(2, ['trace', 'copy', 'recall'].indexOf(q.mode || 'trace') + 1));
+    }
     run.marks[run.i] = run.clean;
     if (run.clean) run.first++;
     save();
@@ -785,6 +1097,7 @@
         boop();
         palState('think', 1200);
         if (c.say) say(c.say);
+        else if (!q.oopsed) { q.oopsed = true; say(one(LINES.oops)); }
       }
     });
   }
@@ -811,6 +1124,7 @@
         run.clean = false;
         boop();
         palState('think', 1000);
+        if (!q.oopsed) { q.oopsed = true; say(one(LINES.oops)); }
         b.classList.remove('wob'); void b.offsetWidth; b.classList.add('wob');
       }
     });
@@ -819,14 +1133,16 @@
   /* ---------- tracing ---------- */
   const FONT = px => `700 ${px}px Andika, "Comic Sans MS", sans-serif`;
   function renderTrace(q) {
+    const mode = q.mode || 'trace', free = mode !== 'trace';
     const S = Math.round(Math.min(window.innerWidth - 32, window.innerHeight * 0.52, 460));
     shell(`
-      <div class="prompt">${palBtn()}${q.word ? `<div class="trace-word"><span class="tw-pic">${q.emoji}</span>${q.glyphs.map(g => `<b>${esc(g)}</b>`).join('')}</div>` : ''}</div>
-      <div class="pad" style="width:${S}px;height:${S}px">
+      <div class="prompt">${palBtn()}${q.word ? `<div class="trace-word"><span class="tw-pic">${q.emoji}</span>${q.glyphs.map(g => `<b>${esc(g)}</b>`).join('')}</div>` : ''}${mode === 'copy' ? `<div class="model">${esc(q.glyphs[0])}</div>` : ''}</div>
+      <div class="pad ${free ? 'blank' : ''}" style="width:${S}px;height:${S}px">
         <canvas id="guide"></canvas><canvas id="hint"></canvas><canvas id="ink"></canvas>
       </div>
       <div class="trace-btns">
         <button class="round big" id="clear" aria-label="Rub out">🧽</button>
+        ${mode === 'recall' ? '<button class="round big" id="peek" aria-label="Peek">👀</button>' : ''}
         <button class="round big" id="skip" aria-label="Skip">➜</button>
       </div>`);
     wireCommon(q);
@@ -838,7 +1154,7 @@
     const M = 96; // small hidden canvases used to mark the tracing
     const mk = () => { const c = document.createElement('canvas'); c.width = c.height = M; return c.getContext('2d', { willReadFrequently: true }); };
     const maskC = mk(), tolC = mk(), inkC = mk();
-    let gi = 0, glyphPx = null, tolPx = null, shape = null, nudged = false, busy = false, last = null, hintTimer = null;
+    let gi = 0, glyphPx = null, tolPx = null, shape = null, nudged = false, busy = false, last = null, hintTimer = null, strokes = [];
     const id = run.id;
 
     function drawGlyph(ctx, size, ch, stroke) {
@@ -870,7 +1186,8 @@
       gc.beginPath(); gc.moveTo(12, base - xh); gc.lineTo(S - 12, base - xh); gc.stroke();
       gc.setLineDash([]);
       gc.fillStyle = '#D9E2F3';
-      drawGlyph(gc, S, ch);
+      if (!free) drawGlyph(gc, S, ch);
+      strokes = [];
       maskC.clearRect(0, 0, M, M); tolC.clearRect(0, 0, M, M);
       maskC.fillStyle = tolC.fillStyle = tolC.strokeStyle = '#000';
       drawGlyph(maskC, M, ch);
@@ -878,7 +1195,7 @@
       glyphPx = maskC.getImageData(0, 0, M, M).data;
       tolPx = tolC.getImageData(0, 0, M, M).data;
       shape = TRACE.analyse(glyphPx, M);
-      window.MYABC_TRACE = { M, S, glyphPx, shape, ch };
+      window.MYABC_TRACE = { M, S, glyphPx, shape, ch, mode };
       $app.querySelectorAll('.trace-word b').forEach((b, k) => { b.className = k < gi ? 'done' : k === gi ? 'now' : ''; });
     }
 
@@ -906,7 +1223,31 @@
       r.unreached.forEach(p => { hc.beginPath(); hc.arc((p.x + 0.5) * k, (p.y + 0.5) * k, S * 0.055, 0, 7); hc.fill(); });
     }
 
+    // writing without a guide: the letter shows faintly if she pauses without getting it
+    function ghost(ms) {
+      hc.clearRect(0, 0, S, S);
+      hc.fillStyle = 'rgba(168, 85, 247, .3)';
+      drawGlyph(hc, S, q.glyphs[gi]);
+      run.clean = false;
+      if (ms) setTimeout(() => { if (alive(id) && !busy) hc.clearRect(0, 0, S, S); }, ms);
+    }
+    const rivals = ch => (/\d/.test(ch) ? '0123456789' : ch === ch.toUpperCase() ? D.UPPER.join('') : D.LOWER.join('')).split('');
+    function checkFree() {
+      const ch = q.glyphs[gi];
+      const r = TRACE.written(strokes, ch, M, drawGlyph, rivals(ch));
+      window.MYABC_LAST = r;
+      if (r.pass) return true;
+      clearTimeout(hintTimer);
+      hintTimer = setTimeout(() => {
+        if (!alive(id) || busy || last || !strokes.length) return;
+        ghost();
+        if (!nudged) { nudged = true; say(LINES.lookAgain); }
+      }, 3000);
+      return false;
+    }
+
     function check() {
+      if (free) return checkFree();
       const r = TRACE.judge(shape, inkC.getImageData(0, 0, M, M).data, tolPx);
       if (r.pass) { hc.clearRect(0, 0, S, S); return true; }
       // Only hint once she has stopped drawing for a moment, not between strokes.
@@ -944,17 +1285,21 @@
       e.preventDefault();
       try { ink.setPointerCapture(e.pointerId); } catch (err) { /* ok */ }
       last = pt(e); dot(last);
+      strokes.push([{ x: last.x * M / S, y: last.y * M / S }]);
     };
     ink.onpointermove = e => {
       if (!last || busy) return;
       const p = pt(e); seg(last, p); last = p;
+      strokes[strokes.length - 1].push({ x: p.x * M / S, y: p.y * M / S });
     };
     ink.onpointerup = ink.onpointercancel = () => {
       if (!last) return;
       last = null;
       if (!busy && check()) passed();
     };
-    $app.querySelector('#clear').onclick = () => { if (!busy) { clearTimeout(hintTimer); ic.clearRect(0, 0, S, S); inkC.clearRect(0, 0, M, M); hc.clearRect(0, 0, S, S); } };
+    $app.querySelector('#clear').onclick = () => { if (!busy) { clearTimeout(hintTimer); strokes = []; ic.clearRect(0, 0, S, S); inkC.clearRect(0, 0, M, M); hc.clearRect(0, 0, S, S); } };
+    const peek = $app.querySelector('#peek');
+    if (peek) peek.onclick = () => { if (!busy) { tap(); ghost(2000); } };
     $app.querySelector('#skip').onclick = () => {
       if (busy) return;
       run.clean = false;
@@ -978,11 +1323,7 @@
     const colsLeft = Object.keys(PAL.COLORS).filter(c => !p.colors.includes(c));
     if (n % 5 === 1 && hatsLeft.length) { const h = hatsLeft[0]; p.hats.push(h); p.hat = h; return { type: 'hat', label: `A new hat for ${N()}!`, line: LINES.reward.hat }; }
     if (n % 5 === 3 && colsLeft.length) { const c = colsLeft[0]; p.colors.push(c); return { type: 'color', c, label: `A new colour for ${N()}!`, line: LINES.reward.color }; }
-    const have = store.stickers.map(s => s.e);
-    const fresh = D.STICKERS.filter(s => !have.includes(s));
-    const e = one(fresh.length ? fresh : D.STICKERS);
-    store.stickers.push(Object.assign({ e }, freeSpot()));
-    return { type: 'sticker', e, label: 'New sticker!', line: LINES.reward.sticker };
+    return stickerReward();
   }
 
   function finish() {
@@ -1026,6 +1367,63 @@
     $app.querySelector('#toplace').onclick = () => { history.replaceState(null, ''); place(); };
   }
 
+  function milestoneReward(k) {
+    const p = store.pal;
+    p.scenes = p.scenes || ['garden'];
+    const kinds = ['hat', 'color', 'scene'];
+    for (let t = 0; t < 3; t++) {
+      const kind = kinds[(k + t) % 3];
+      if (kind === 'hat') { const h = PAL.HATS.find(x => !p.hats.includes(x)); if (h) { p.hats.push(h); p.hat = h; return { type: 'hat', label: `A new hat for ${N()}!`, line: LINES.reward.hat }; } }
+      if (kind === 'color') { const c = Object.keys(PAL.COLORS).find(x => !p.colors.includes(x)); if (c) { p.colors.push(c); return { type: 'color', c, label: `A new colour for ${N()}!`, line: LINES.reward.color }; } }
+      if (kind === 'scene') { const sc = Object.keys(SCENES).find(x => !p.scenes.includes(x)); if (sc) { p.scenes.push(sc); p.scene = sc; return { type: 'scene', sc, label: 'A new place for the yard!', line: LINES.reward.scene }; } }
+    }
+    return null;
+  }
+  function stickerReward() {
+    const have = store.stickers.map(s => s.e);
+    const fresh = D.STICKERS.filter(s => !have.includes(s));
+    const e = one(fresh.length ? fresh : D.STICKERS);
+    store.stickers.push(Object.assign({ e, out: false, fresh: true }, freeSpot()));
+    return { type: 'sticker', e, label: 'New sticker!', line: LINES.reward.sticker };
+  }
+
+  function finishStop() {
+    const { path: i, first, n } = run;
+    const ps = pathState();
+    const pct = first / n, stars = pct >= 0.85 ? 3 : pct >= 0.5 ? 2 : 1;
+    const firstTime = !ps.done[i];
+    ps.done[i] = true;
+    ps.stars[i] = Math.max(ps.stars[i] || 0, stars);
+    ps.quick = pct >= 0.95;
+    if (i === ps.at && ps.at < PATH.length - 1) ps.at++;
+    const r = (firstTime && isMilestone(i) && milestoneReward(Math.floor(i / 5))) || stickerReward();
+    save();
+    runId++;
+    const look = r.type === 'color' ? Object.assign({}, store.pal, { color: r.c }) : store.pal;
+    const more = i + 1 < PATH.length;
+    $app.innerHTML = `
+      <div class="screen end sec-${run.g.sec}">
+        <div class="stars">${[0, 1, 2].map(k => `<span class="${k < stars ? 'on' : ''}" style="animation-delay:${k * 0.18}s">★</span>`).join('')}</div>
+        <div class="prize-row">
+          <div class="end-pal">${PAL.svg(look, 'happy')}</div>
+          ${r.type === 'sticker' ? `<div class="prize">${r.e}</div>` : r.type === 'scene' ? `<div class="prize scene-prize">${SCENE_ICON[r.sc]}</div>` : ''}
+        </div>
+        <p class="prize-label">${esc(r.label)}</p>
+        <div class="end-btns">
+          ${more ? '<button class="bigbtn" id="next">➜ <span>Next stop</span></button>' : ''}
+          <button class="bigbtn alt" id="homeb">🗺 <span>Path</span></button>
+        </div>
+        <button class="linkbtn" id="toplace">🏡 ${esc(N())}'s place</button>
+        <p class="note">${first} of ${n} first go</p>
+      </div>`;
+    fanfare();
+    confetti();
+    say([Clips.has('finish') ? { clip: 'finish' } : LINES.finished, r.line, more ? LINES.path.next : null]);
+    if (more) $app.querySelector('#next').onclick = () => { history.replaceState(null, ''); startStop(Math.min(i + 1, ps.at)); };
+    $app.querySelector('#homeb').onclick = goHome;
+    $app.querySelector('#toplace').onclick = () => { history.replaceState(null, ''); place(); };
+  }
+
   /* ---------- updates ----------
      The app is a page that can stay open for days, so it checks GitHub itself:
      on launch, whenever it comes back to the front, and from the grown-ups page.
@@ -1063,7 +1461,7 @@
     try { if (sessionStorage.getItem('myabc.reloads') >= 3) return; sessionStorage.setItem('myabc.reloads', (+sessionStorage.getItem('myabc.reloads') || 0) + 1); } catch (e) { /* ok */ }
     location.reload();
   }
-  const quiet = () => !!document.querySelector('.world-screen') && !document.querySelector('.sheet');
+  const quiet = () => !!document.querySelector('.world-screen, .path-screen') && !document.querySelector('.sheet');
   async function autoUpdate() {
     if (await checkUpdate(false) === 'new' && quiet()) applyUpdate();
   }
@@ -1077,7 +1475,9 @@
       .slice(0, 6).map(([k]) => k.split('|')[1]);
   }
   function summaryText() {
-    const lines = [`My ABC progress, ${new Date().toISOString().slice(0, 10)}`];
+    const ps = pathState();
+    const lines = [`My ABC progress, ${new Date().toISOString().slice(0, 10)}`,
+      `Path: at stop ${ps.at + 1} of ${PATH.length} (${stopLabel(PATH[ps.at])}). Writes from memory: ${D.ORDER.filter(l => writeStage(l) >= 2).join(' ') || 'none'}. Copies: ${D.ORDER.filter(l => writeStage(l) === 1).join(' ') || 'none'}.`];
     GAMES.forEach(g => {
       const st = gstat(g.id);
       if (!st.rounds.length) { lines.push(`${g.name}: not played yet`); return; }
@@ -1112,6 +1512,12 @@
           <button id="rate">Voice speed: <b>${store.settings.rate < 0.8 ? 'slow' : store.settings.rate < 0.95 ? 'gentle' : 'normal'}</b></button>
           <button id="sfx">Sounds: <b>${store.settings.sfx ? 'on' : 'off'}</b></button>
           <button id="copy">Copy progress summary</button>
+        </div>
+        <h3 class="g-sec">Path</h3>
+        <div class="g-row">
+          <div class="g-head"><b>Stop ${pathState().at + 1} of ${PATH.length}: ${esc(stopLabel(PATH[pathState().at]))}</b><span>${Object.keys(pathState().done).length} done</span></div>
+          <div class="g-levels"><button id="pback">◀ Back a stop</button><button id="pfwd">Skip ahead a stop ▶</button></div>
+          <div class="g-meta">Writing from memory: ${D.ORDER.filter(l => writeStage(l) >= 2).join(' ') || 'none yet'}<br>Copying: ${D.ORDER.filter(l => writeStage(l) === 1).join(' ') || 'none yet'}</div>
           <button id="update">Check for updates${loadedPrint ? ` <span class="ver">(version ${loadedPrint})</span>` : ''}</button>
         </div>
         ${rows}
@@ -1125,6 +1531,8 @@
     });
     const rerender = () => { history.replaceState(null, ''); grownups(); };
     $app.querySelector('#pname').onchange = e => { store.pal.name = e.target.value.trim().slice(0, 12) || 'Pip'; save(); };
+    $app.querySelector('#pback').onclick = () => { const ps = pathState(); ps.at = Math.max(0, ps.at - 1); save(); rerender(); };
+    $app.querySelector('#pfwd').onclick = () => { const ps = pathState(); ps.done[ps.at] = true; ps.at = Math.min(PATH.length - 1, ps.at + 1); save(); rerender(); };
     $app.querySelector('#voice').onclick = () => { history.replaceState(null, ''); voiceScreen(); };
     $app.querySelector('#rate').onclick = () => { const r = store.settings.rate; store.settings.rate = r < 0.8 ? 0.85 : r < 0.95 ? 1 : 0.7; save(); rerender(); say(LINES.speedTest); };
     $app.querySelector('#sfx').onclick = () => { store.settings.sfx = !store.settings.sfx; save(); rerender(); };
@@ -1142,8 +1550,8 @@
     };
     $app.querySelector('#reset').onclick = () => {
       if (!window.confirm('Clear all scores, levels, stickers, hats and colours? Voice recordings are kept.')) return;
-      store.games = {}; store.items = {}; store.stickers = [];
-      Object.assign(store.pal, { hat: null, hats: [], color: 'brown', colors: ['brown'] });
+      store.games = {}; store.items = {}; store.stickers = []; store.path = {}; store.write = {};
+      Object.assign(store.pal, { hat: null, hats: [], color: 'brown', colors: ['brown'], scenes: ['garden'], scene: 'garden' });
       save(); rerender();
     };
   }

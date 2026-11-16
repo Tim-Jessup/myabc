@@ -46,7 +46,10 @@ const DATA = (() => {
     ['bat', '🦇'], ['pen', '🖊️'], ['map', '🗺️'], ['van', '🚐'], ['log', '🪵'],
     ['web', '🕸️'], ['bin', '🗑️'], ['box', '📦'], ['nut', '🥜'], ['leg', '🦵'],
     ['rat', '🐀'], ['cap', '🧢'], ['can', '🥫'], ['pin', '📌'], ['ten', '🔟'],
-    ['egg', '🥚'], ['ant', '🐜'], ['bag', '🛍️'], ['gem', '💎'], ['man', '👨']
+    ['egg', '🥚'], ['ant', '🐜'], ['bag', '🛍️'], ['gem', '💎'], ['man', '👨'],
+    // words made only from the first letters taught, so word stops can start early
+    ['tap', '🚰'], ['pan', '🍳'], ['sad', '😢'], ['dad', '👨‍👧'], ['mop', '🧹'], ['pot', '🍯'],
+    ['kid', '🧒'], ['mug', '☕'], ['cup', '🥤'], ['tub', '🛁'], ['hug', '🫂']
   ];
 
   // A step up: four and five letter words.
@@ -82,5 +85,19 @@ const DATA = (() => {
   const PRAISE = ['Thank you!', 'You did it!', 'Great helping!', 'Yes!', 'Well done!', 'You got it!'];
   const YUM = ['Yum!', 'Yum yum!', 'Delicious!', 'More please!', 'Tasty!'];
 
-  return { UPPER, LOWER, CONFUSABLE, START, CVC, LONGER, SIGHT, SENTENCES, COUNTABLES, STICKERS, PRAISE, YUM };
+  // The order letters are usually taught in Australian schools: these make words quickly.
+  const ORDER = 's a t p i n m d g o c k e u r h b f l j v w x y z q'.split(' ');
+
+  // What each sticker is called (shown in the sticker book and said by Pip).
+  const STICKER_NAMES = {
+    '🦘': 'kangaroo', '🐨': 'koala', '🦉': 'owl', '🐢': 'turtle', '🦄': 'unicorn', '🐬': 'dolphin',
+    '🦋': 'butterfly', '🐝': 'bee', '🐙': 'octopus', '🦊': 'fox', '🐼': 'panda', '🦁': 'lion',
+    '🐸': 'frog', '🐧': 'penguin', '🦜': 'parrot', '🐳': 'whale', '🦖': 'dinosaur', '🐞': 'ladybird',
+    '🌈': 'rainbow', '🚀': 'rocket', '🍉': 'watermelon', '🍦': 'ice cream', '🎈': 'balloon', '⭐': 'star',
+    '🌻': 'sunflower', '🍓': 'strawberry', '🧸': 'teddy', '🎨': 'paint palette', '🚂': 'train', '🏰': 'castle',
+    '🦩': 'flamingo', '🐿️': 'squirrel', '🦔': 'hedgehog', '🐠': 'fish', '🪁': 'kite', '🌙': 'moon'
+  };
+  const FOOD = ['🍉', '🍦', '🍓'];
+
+  return { UPPER, LOWER, CONFUSABLE, START, CVC, LONGER, SIGHT, SENTENCES, COUNTABLES, STICKERS, PRAISE, YUM, ORDER, STICKER_NAMES, FOOD };
 })();
