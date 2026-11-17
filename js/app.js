@@ -796,7 +796,7 @@
     const next = '<button class="bigbtn next-step" id="go" disabled>➜</button>';
     let body = '', line = [];
     if (it.step === 'show') {
-      if (type === 'letter') { body = `<div class="intro-card"><div class="intro-big">${esc(v)}<span>${esc(T(v))}</span></div></div>`; line = [LINES.newLetter, LINES.thisIs(T(v)), sound(v)]; }
+      if (type === 'letter') { body = `<div class="intro-card"><div class="intro-big">${esc(T(v))}<span>${esc(v)}</span></div></div>`; line = [LINES.newLetter, LINES.thisIs(T(v)), sound(v)]; }
       else if (type === 'number') { body = `<div class="intro-card"><div class="intro-big num">${esc(v)}</div></div>`; line = [LINES.newNumber, LINES.thisIs(v), v === '0' ? LINES.zero : null]; }
       else { body = `<div class="intro-card"><div class="intro-big word">${esc(v)}</div></div>`; line = [LINES.newWord, LINES.wordSays(v), LINES.tricky]; }
     } else if (it.step === 'word') {
@@ -812,7 +812,7 @@
       body = `<div class="intro-card"><div class="count-box ${n > 6 ? 'nbig' : 'nsmall'} tapcount">${Array.from({ length: n }, (_, k) => `<button class="ct" data-k="${k}">${e}</button>`).join('')}</div><div class="count-sum" id="sum"></div></div>`;
       line = [LINES.countThem];
     } else if (it.step === 'sayit') {
-      const shown = type === 'letter' ? `${esc(v)}<span>${esc(T(v))}</span>` : esc(v);
+      const shown = type === 'letter' ? `${esc(T(v))}<span>${esc(v)}</span>` : esc(v);
       body = `<div class="intro-card"><div class="intro-big ${type === 'letter' ? '' : type === 'number' ? 'num' : 'word'}">${shown}</div>
         <button class="mic" id="mic" aria-label="Say it">🎤</button><p class="mic-note" id="micnote"></p></div>`;
       line = [LINES.sayIt(type === 'letter' ? T(v) : v)];

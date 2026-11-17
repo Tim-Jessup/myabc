@@ -286,8 +286,8 @@ h1, h2, h3, p { margin: 0; }
 
 /* ----- introducing something new ----- */
 .intro-card { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; }
-.intro-big { font-size: min(40vw, 190px); font-weight: 700; line-height: 1; color: var(--c); background: var(--card); border-radius: 32px; padding: 6px 34px 24px; box-shadow: 0 6px 0 var(--line); }
-.intro-big span { font-size: .5em; margin-left: .25em; color: var(--soft); }
+.intro-big { font-size: min(34vw, 170px); font-weight: 700; line-height: 1; color: var(--c); background: var(--card); border-radius: 32px; padding: 6px 34px 24px; box-shadow: 0 6px 0 var(--line); }
+.intro-big span { margin-left: .08em; } /* big and little letter side by side at the same size: Aa */
 .intro-big.word { font-size: min(22vw, 110px); padding: 10px 30px 20px; }
 .intro-big.num { min-width: 1.4em; text-align: center; }
 .intro-pic { font-size: min(34vw, 150px); line-height: 1.1; }
