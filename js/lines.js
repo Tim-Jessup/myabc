@@ -28,6 +28,7 @@ const LINES = (() => {
     copyNumber: n => `Can you write ${n}, just like this?`,
     writeNumber: n => `Can you write the number ${n}?`,
     lookAgain: 'Have a look... now you try!',
+    showMe: "Good try! Here's how it looks.",
     // a wrong answer: curious and kind, never "wrong"
     oops: ["Hmm, not that one. Let's look again!", 'Ooh, tricky one! Try another.', 'Oops! Have another go.', 'So close! Have a look again.'],
     path: { go: "Let's go!", next: 'Hooray! On to the next stop!', locked: "We're not there yet. Let's keep walking!" },
@@ -95,7 +96,7 @@ const LINES = (() => {
     const startWords = Object.values(D.START).flat().map(x => x[0]);
     const pictureWords = D.CVC.concat(D.LONGER).map(x => x[0]);
     add(L.hello); add(Object.values(L.places)); add(Object.values(L.intro));
-    add([L.howMany, L.whichOne, L.readWord, L.nearly, L.finished, L.speedTest, L.lookAgain, L.tidy]);
+    add([L.howMany, L.whichOne, L.readWord, L.nearly, L.finished, L.speedTest, L.lookAgain, L.showMe, L.tidy]);
     add(L.oops); add(Object.values(L.path));
     letters.forEach(T => add([L.copyLetter(T), L.writeLittle(T), L.writeBig(T)]));
     for (let n = 0; n <= 9; n++) add([L.copyNumber(n), L.writeNumber(n)]);

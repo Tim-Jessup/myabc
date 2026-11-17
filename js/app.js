@@ -740,21 +740,53 @@
   }
 
   // a challenge gate: everything from this section, mixed
+  // A challenge gate: everything from this section, mixed. Questions are dealt out by kind
+  // in turn (find it, hear it, write it, count it, big and little, what does it start with,
+  // spell it, read it), so every kind comes up and the same game never comes twice running.
+  // A gate is the one place "what does this start with?" fits: she knows several letters by
+  // then, so the answer isn't given away.
   function gateItems(si) {
     const keys = EVENTS.filter(e => e.kind === 'intro' && e.section === si).map(e => CUR.itemKey(e.item));
     const words = new Set(CUR.wordsFrom(CUR.SECTIONS[si].letters.concat(...CUR.SECTIONS.slice(0, si).map(x => x.letters))));
     const mine = k => keys.includes(CARDS.itemOf(k)) || (k.startsWith('word:') && words.has(k.split(':')[1]));
-    // one card for every item from the section, of a random skill, so every kind of question
-    // comes up; then the dustiest cards to fill the rest
-    const picked = [];
-    keys.forEach(item => {
-      const cs = CARDS.cardsOf(store, item).map(([k]) => k);
-      if (cs.length) picked.push(one(cs));
-    });
-    const wordCards = shuffle(Object.keys(store.cards || {}).filter(k => k.startsWith('word:') && mine(k))).slice(0, 2);
-    const fill = CARDS.queue(store, 10, k => mine(k) && !picked.includes(k) && !wordCards.includes(k));
-    return shuffle(picked.concat(wordCards, fill).slice(0, 10)).map(cardQuestion);
+    const cards = Object.keys(store.cards || {}).filter(mine);
+    // the kinds of question, each with the cards it can ask about
+    const kinds = {};
+    const addKind = (name, filter, make) => { const ks = cards.filter(filter); if (ks.length) kinds[name] = { ks: shuffle(ks), make }; };
+    addKind('findLetter', k => /^letter:.*:see$/.test(k), k => cardQuestion(k));
+    addKind('bigLittle', k => /^letter:.*:see$/.test(k), k => Object.assign(cardQuestion(k), { g: byId.matchCase, lv: rnd(2) }));
+    addKind('soundPic', k => /^letter:.*:sound$/.test(k), k => cardQuestion(k));
+    addKind('firstSound', k => /^letter:.*:sound$/.test(k), k => Object.assign(cardQuestion(k), { g: byId.firstSound, lv: 0 }));
+    addKind('writeLetter', k => /^letter:.*:write$/.test(k), k => cardQuestion(k));
+    addKind('findNumber', k => /^number:.*:see$/.test(k), k => cardQuestion(k));
+    addKind('count', k => /^number:.*:count$/.test(k), k => cardQuestion(k));
+    addKind('writeNumber', k => /^number:.*:write$/.test(k), k => cardQuestion(k));
+    addKind('sight', k => /^sight:.*:see$/.test(k), k => cardQuestion(k));
+    addKind('buildSight', k => /^sight:.*:spell$/.test(k), k => cardQuestion(k));
+    addKind('spell', k => /^word:.*:spell$/.test(k), k => cardQuestion(k));
+    addKind('read', k => /^word:.*:read$/.test(k), k => cardQuestion(k));
+    // with letters met before but no word cards yet, still ask her to read a word she can sound out
+    if (!kinds.read && words.size) kinds.readNew = { ks: shuffle([...words]), make: w => { learn({ type: 'word', v: w }); return cardQuestion(`word:${w}:read`); } };
+    const order = shuffle(Object.keys(kinds)), out = [];
+    while (out.length < 10 && order.some(n => kinds[n].ks.length)) {
+      for (const n of order) {
+        if (out.length >= 10 || !kinds[n].ks.length) continue;
+        // dustiest first within each kind
+        kinds[n].ks.sort((x, y) => (store.cards[y] ? CARDS.dust(store.cards[y]) : 0) - (store.cards[x] ? CARDS.dust(store.cards[x]) : 0));
+        out.push(kinds[n].make(kinds[n].ks.shift()));
+      }
+    }
+    // never the same game twice running
+    for (let k = 1; k < out.length; k++) {
+      if (out[k].g === out[k - 1].g) {
+        const j = out.findIndex((x, m) => m > k && x.g !== out[k - 1].g && (!out[m + 1] || out[m + 1].g !== out[k].g));
+        if (j > 0) [out[k], out[j]] = [out[j], out[k]];
+      }
+    }
+    return out;
   }
+
+  window.MYABC_DEBUG = { gate: si => gateItems(si).map(x => `${x.g.id}(${x.force})`) }; // for the automated tests
 
   function startEvent(i) {
     const ev = EVENTS[i];
@@ -1242,7 +1274,7 @@
     }
     const q = it && it.make ? it.make() : run.g.make(run.level);
     if (it && it.card) q.card = it.card;
-    window.MYABC_Q = q; // lets the automated tests answer correctly
+    window.MYABC_Q = q; window.MYABC_GAME = run.g.id; // lets the automated tests answer correctly
     run.q = q;
     run.clean = true;
     ({ pick: renderPick, build: renderBuild, trace: renderTrace })[q.type](q);
@@ -1561,9 +1593,18 @@
       run.clean = false;
       if (gi < q.glyphs.length - 1) { gi++; setGlyph(); }
       else {
-        busy = true; run.marks[run.i] = false; gradeCard(q, 'missed');
+        busy = true; run.marks[run.i] = false;
         const s = (store.items[run.g.id + run.level + '|' + q.key] = itemStat(run.g.id + run.level, q.key));
-        s[0]++; s[1]++; save(); run.i++; nextQ();
+        s[0]++; s[1]++;
+        const next = () => { save(); if (alive(id)) { run.i++; nextQ(); } };
+        if (!strokes.length) { gradeCard(q, 'missed'); return next(); } // didn't try: stays dusty
+        // she had a go: show her the letter, and count it as done with help (it comes back sooner)
+        gradeCard(q, 'helped');
+        hc.clearRect(0, 0, S, S);
+        hc.fillStyle = 'rgba(34, 181, 115, .45)';
+        drawGlyph(hc, S, q.glyphs[gi]);
+        palState('happy', 1400);
+        Promise.all([say(LINES.showMe), wait(1800)]).then(next);
       }
     };
 
