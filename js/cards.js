@@ -2,9 +2,13 @@
 //   letter:s:see  (pick s out of a set)     letter:s:sound  (what starts with s)
 //   letter:s:write (write s from memory)    number:3:see / number:3:count / number:3:write
 //   sight:the:see / sight:the:spell         word:cat:read / word:cat:spell
-// A card sits in a box. Each box comes back after a longer gap. A clean answer moves the
-// card up a box; a mistake drops it two, so it comes back soon. "Dust" is how overdue a
-// card is, or a recent mistake: it's what the prize room shows.
+// A card sits in a box. Each box comes back after a longer gap. Three ways an answer can go:
+//   clean   right first go: up a box
+//   helped  right in the end, after a wrong try or a peek: down a box, so it comes back
+//           sooner, but it's done for now (it gets polished)
+//   missed  skipped: down two boxes, and it stays dusty until she gets it
+// "Dust" is how overdue a card is, or a miss she hasn't put right yet. It's what the prize
+// room shows.
 const CARDS = (() => {
   const DAY = 864e5;
   const GAPS = [10 / 1440, 1, 3, 7, 14, 30]; // days, box 0 to 5
@@ -18,11 +22,14 @@ const CARDS = (() => {
     return store.cards[k];
   }
 
-  function grade(store, k, ok, now = Date.now()) {
+  function grade(store, k, result, now = Date.now()) {
     const c = store.cards && store.cards[k];
     if (!c) return;
+    if (result === true) result = 'clean';
+    if (result === false) result = 'missed';
     c.seen++; c.last = now;
-    if (ok) c.box = Math.min(GAPS.length - 1, c.box + 1);
+    if (result === 'clean') { c.box = Math.min(GAPS.length - 1, c.box + 1); c.lastOk = now; }
+    else if (result === 'helped') { c.miss++; c.lastMiss = now; c.lastOk = now; c.box = Math.max(0, c.box - 1); }
     else { c.miss++; c.lastMiss = now; c.box = Math.max(0, c.box - 2); }
     c.due = now + GAPS[c.box] * DAY;
   }
@@ -32,7 +39,7 @@ const CARDS = (() => {
     if (!c) return 0;
     const gap = GAPS[c.box] * DAY, over = now - c.due;
     let d = over < 0 ? 0 : over < gap ? 1 : over < 3 * gap ? 2 : 3;
-    if (c.lastMiss && now - c.lastMiss < 2 * DAY && c.box < 2) d = Math.max(d, 2);
+    if (c.lastMiss && !(c.lastOk >= c.lastMiss)) d = Math.max(d, 2); // a miss not yet put right
     return d;
   }
 

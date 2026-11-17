@@ -1259,11 +1259,12 @@
     const k = CARDS.key(m[0], String(v).toLowerCase() === 'i' && m[0] === 'sight' ? 'I' : String(v).toLowerCase(), m[1]);
     return store.cards && store.cards[k] ? k : null;
   }
-  function gradeCard(q, ok) {
+  // result: 'clean' (right first go), 'helped' (right after a wrong try or a peek), 'missed' (skipped)
+  function gradeCard(q, result) {
     const k = q.card || freeCard(q);
     if (!k) return;
-    CARDS.grade(store, k, ok);
-    if (run.polish && ok && CARDS.itemDust(store, CARDS.itemOf(k)) === 0) run.cleaned.add(CARDS.itemOf(k));
+    CARDS.grade(store, k, result);
+    if (run.polish && result !== 'missed' && CARDS.itemDust(store, CARDS.itemOf(k)) === 0) run.cleaned.add(CARDS.itemOf(k));
   }
   // polishing: each answer shows the prize being wiped clean
   function polishToast(k, ok) {
@@ -1292,13 +1293,13 @@
       const w = (store.write = store.write || {});
       w[q.key] = Math.max(w[q.key] || 0, Math.min(2, ['trace', 'copy', 'recall'].indexOf(q.mode || 'trace') + 1));
     }
-    gradeCard(q, run.clean);
+    gradeCard(q, run.clean ? 'clean' : 'helped');
     run.marks[run.i] = run.clean;
     if (run.clean) run.first++;
     save();
     chime();
     palState('happy', 1500);
-    if (run.polish && q.card) polishToast(q.card, run.clean);
+    if (run.polish && q.card) polishToast(q.card, CARDS.itemDust(store, CARDS.itemOf(q.card)) === 0);
     await Promise.all([say(cheer(q)), wait(950)]);
     if (!alive(id)) return;
     run.i++;
@@ -1560,7 +1561,7 @@
       run.clean = false;
       if (gi < q.glyphs.length - 1) { gi++; setGlyph(); }
       else {
-        busy = true; run.marks[run.i] = false; gradeCard(q, false);
+        busy = true; run.marks[run.i] = false; gradeCard(q, 'missed');
         const s = (store.items[run.g.id + run.level + '|' + q.key] = itemStat(run.g.id + run.level, q.key));
         s[0]++; s[1]++; save(); run.i++; nextQ();
       }
