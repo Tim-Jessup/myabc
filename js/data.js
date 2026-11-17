@@ -75,7 +75,6 @@ const DATA = (() => {
       'The cat is on the bed']
   ];
 
-  const COUNTABLES = ['🍎', '⭐', '🐟', '🐞', '🌸', '🚗', '🎈', '🍓', '🐥', '🦋'];
 
   const STICKERS = ['🦘', '🐨', '🦉', '🐢', '🦄', '🐬', '🦋', '🐝', '🐙', '🦊', '🐼', '🦁',
     '🐸', '🐧', '🦜', '🐳', '🦖', '🐞', '🌈', '🚀', '🍉', '🍦', '🎈', '⭐', '🌻', '🍓',
@@ -99,5 +98,5 @@ const DATA = (() => {
   };
   const FOOD = ['🍉', '🍦', '🍓'];
 
-  return { UPPER, LOWER, CONFUSABLE, START, CVC, LONGER, SIGHT, SENTENCES, COUNTABLES, STICKERS, PRAISE, YUM, ORDER, STICKER_NAMES, FOOD };
+  return { UPPER, LOWER, CONFUSABLE, START, CVC, LONGER, SIGHT, SENTENCES, STICKERS, PRAISE, YUM, ORDER, STICKER_NAMES, FOOD };
 })();

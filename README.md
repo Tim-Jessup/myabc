@@ -16,10 +16,10 @@ The app checks for a new version when it opens and whenever it comes back to the
 
 Guidelines for development are in [CLAUDE.md](CLAUDE.md).
 
-**The journey** opens the app: six areas (Sandy Beach, Fern Forest, Rocky Hills, Rainbow River, Snowy Mountain, Starry Sky) that teach letters in the order Australian schools use (s a t p, i n m d, g o c k, e u r h, b f l j, v w x y z q), with numbers 0 to 10 and tricky words (I, the, to, no, go, he, she, we, me, was, you, my, are) along the way.
+**The journey** opens the app: six areas (Sandy Beach, Fern Forest, Rocky Hills, Rainbow River, Snowy Mountain, Starry Sky) that teach letters in the order Australian schools use (s a t p, i n m d, g o c k, e u r h, b f l j, v w x y z q) with tricky words (I, the, to, no, go, he, she, we, me, was, you, my, are) along the way.
 
 - **Introductions** teach one new thing: Pip shows it and shows it in a word, then she picks it from a set, traces it, says it out loud (it's recorded and played back to her, not checked), finds a picture that starts with it, and writes it from memory (👀 peeks and a faint guide help if she's stuck). Each one adds a prize to her collection.
-- **Game events** in between practise one kind of thing (letter hunt, writing, sounds, spelling, reading, counting, tricky words), using only what she has learned, dustiest first. Spelling and reading only use words made from her letters, and add those words to her collection.
+- **Game events** in between practise one kind of thing (letter hunt, writing, sounds, spelling, reading, tricky words), using only what she has learned, dustiest first. Spelling and reading only use words made from her letters, and add those words to her collection.
 - **Challenge gates** end each area with a mixed test and a big celebration (a new hat, colour or background).
 
 **Flashcard learning.** Every skill is a card (seeing s, hearing s, writing s, reading "cat", spelling "cat"...). Cards come back after about 10 minutes, then 1, 3, 7, 14 and 30 days; a clean answer moves a card on, a mistake brings it back sooner.
@@ -38,8 +38,6 @@ Stickers live in a sticker book along the bottom, with their names written under
 |---|---|---|
 | Letters | Find the letter | capitals, small letters, look-alikes (b d p q) |
 | Letters | Big and little | match capital to small, and back |
-| Numbers | Find the number | 0–10, 0–20, up to 99 |
-| Numbers | How many? | count 1–5, 1–10, 6–20 |
 | Sounds | What does it start with? | 3 choices, 4 choices, last letter |
 | Sounds | Find the picture | 3 or 4 pictures |
 | Words | Read the word | short words, tricky choices, longer words |
@@ -48,7 +46,6 @@ Stickers live in a sticker book along the bottom, with their names written under
 | Words | Make a sentence | three words, longer |
 | Writing | Trace letters | small letters, capitals |
 | Writing | Write letters | copy small letters, small letters from memory, copy capitals, capitals from memory |
-| Writing | Write numbers | trace, copy, from memory |
 | Writing | Write words | short words, longer words |
 
 Wrong answers just fade out; there is no "fail".
@@ -56,8 +53,8 @@ Wrong answers just fade out; there is no "fail".
 ## Pip the platypus
 
 - Pip is a curious, kind friend who walks the journey with her and speaks as "I" (Pip's gender is left open).
-- The games are framed as helping Pip: feeding Pip letters, numbers and words, rebuilding words that fell apart, sorting out mixed-up sentences.
-- Free play (🌳) is a little world: the letter tree, number pond, sound bell, word house and big pencil each open a set of games.
+- The games are framed as helping Pip: feeding Pip letters and words, rebuilding words that fell apart, sorting out mixed-up sentences.
+- Free play (🌳) is a little world: the letter tree, sound bell, word house and big pencil each open a set of games.
 - Pip's name can be changed on the grown-ups page.
 
 ## Your voice

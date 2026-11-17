@@ -264,7 +264,6 @@
 
   const SECTIONS = [
     { id: 'letters', name: 'Letters' },
-    { id: 'numbers', name: 'Numbers' },
     { id: 'sounds', name: 'Sounds' },
     { id: 'words', name: 'Words' },
     { id: 'writing', name: 'Writing' }
@@ -301,48 +300,6 @@
           say: intro(this.id, again),
           stim: `<div class="stim-letter">${esc(lv === 0 ? T : t)}</div>`,
           choices: shuffle([{ html: ltr(conv(t)), ok: true }].concat(others(D.LOWER, 3, [t]).map(x => ({ html: ltr(conv(x)) }))))
-        };
-      }
-    },
-    {
-      id: 'findNumber', sec: 'numbers', icon: '12', name: 'Find the number',
-      levels: ['0 to 10', '0 to 20', 'Up to 99'],
-      make(lv) {
-        const pool = [];
-        const [lo, hi] = [[0, 10], [0, 20], [10, 99]][lv];
-        for (let i = lo; i <= hi; i++) pool.push(i);
-        const t = choose(this.id + lv, pool);
-        const near = new Set();
-        if (t > 9) near.add(+String(t).split('').reverse().join(''));
-        [t + 1, t - 1, t + 10, t - 10].forEach(x => near.add(x));
-        let wrong = shuffle([...near].filter(x => x !== t && x >= lo && x <= hi)).slice(0, 2);
-        wrong = wrong.concat(others(pool, 3 - wrong.length, [t, ...wrong]));
-        const again = LINES.findNumber(t);
-        return {
-          type: 'pick', key: t, cols: 2, feed: true, again,
-          say: intro(this.id, again),
-          choices: shuffle([{ html: ltr(t), ok: true }].concat(wrong.map(x => ({ html: ltr(x) }))))
-        };
-      }
-    },
-    {
-      id: 'count', sec: 'numbers', icon: '🐞', name: 'How many?',
-      levels: ['1 to 5', '1 to 10', '6 to 20'],
-      make(lv) {
-        const [lo, hi] = [[1, 5], [1, 10], [6, 20]][lv];
-        const pool = [];
-        for (let i = lo; i <= hi; i++) pool.push(i);
-        const t = choose(this.id + lv, pool);
-        const nearby = [t - 2, t - 1, t + 1, t + 2].filter(x => x >= Math.max(1, lo - 1) && x <= hi + 1);
-        const wrong = shuffle(nearby).slice(0, lv === 0 ? 2 : 3);
-        const e = one(D.COUNTABLES);
-        const again = LINES.howMany;
-        return {
-          type: 'pick', key: t, cols: lv === 0 ? 3 : 2, small: true, again,
-          say: intro(this.id, again),
-          stim: `<div class="count-box n${t > 10 ? 'big' : 'small'}">${Array(t).fill(`<span>${e}</span>`).join('')}</div>`,
-          after: LINES.number(t),
-          choices: [t, ...wrong].sort((a, b) => a - b).map(x => ({ html: ltr(x), ok: x === t }))
         };
       }
     },
@@ -461,14 +418,6 @@
       }
     },
     {
-      id: 'traceNumbers', sec: 'writing', icon: '5', name: 'Write numbers', n: 6,
-      levels: ['Trace 0 to 9', 'Copy 0 to 9', '0 to 9 from memory'],
-      make(lv) {
-        const t = choose(this.id + lv, '0123456789'.split(''));
-        return writeQ(t, ['trace', 'copy', 'recall'][lv], this.id);
-      }
-    },
-    {
       id: 'traceWords', sec: 'writing', icon: '📝', name: 'Write words', n: 3,
       levels: ['Short words', 'Longer words'],
       make(lv) {
@@ -478,13 +427,13 @@
       }
     }
   ];
-  // writing a letter or number: trace it, copy it from a model, or write it from memory
+  // writing a letter: trace it, copy it from a model, or write it from memory
   function writeQ(t, mode, gameId) {
-    const T = String(t).toUpperCase(), digit = /\d/.test(t);
+    const T = String(t).toUpperCase();
     let again;
-    if (mode === 'trace') again = digit ? LINES.traceNumber(t) : LINES.traceLetter(T);
-    else if (mode === 'copy') again = digit ? LINES.copyNumber(t) : LINES.copyLetter(T);
-    else again = digit ? LINES.writeNumber(t) : t === T ? LINES.writeBig(T) : LINES.writeLittle(T);
+    if (mode === 'trace') again = LINES.traceLetter(T);
+    else if (mode === 'copy') again = LINES.copyLetter(T);
+    else again = t === T ? LINES.writeBig(T) : LINES.writeLittle(T);
     return { type: 'trace', mode, key: String(t), glyphs: [String(t)], again, say: intro(gameId, again) };
   }
   GAMES.push({
@@ -497,7 +446,7 @@
       return { type: 'build', key: w, again, say: intro(this.id, again), answer: letters, tiles: shuffle(letters.concat(lv ? others(D.LOWER, 2, letters) : [])), after: LINES.word(w), letters: true };
     }
   });
-  GAMES.splice(GAMES.findIndex(g => g.id === 'traceNumbers'), 0, {
+  GAMES.splice(GAMES.findIndex(g => g.id === 'traceWords'), 0, {
     id: 'writeLetters', sec: 'writing', icon: '✍️', name: 'Write letters', n: 6,
     levels: ['Copy small letters', 'Small letters from memory', 'Copy capitals', 'Capitals from memory'],
     make(lv) {
@@ -518,7 +467,7 @@
   function worldSVG() {
     const lbl = (x, y, t) => `<text x="${x}" y="${y}" class="lbl">${t}</text>`;
     const fruit = (x, y, t) => `<g class="fruit"><circle cx="${x}" cy="${y}" r="17" fill="#FF6B4A"/><text x="${x}" y="${y + 7}" class="ft">${t}</text></g>`;
-    const pad = (x, y, t) => `<g class="fruit"><circle cx="${x}" cy="${y}" r="17" fill="#3FA06A"/><text x="${x}" y="${y + 7}" class="ft">${t}</text></g>`;
+    const pad = (x, y) => `<path d="M${x} ${y} L${x + 16} ${y - 7} A17 17 0 1 0 ${x + 16} ${y + 7} Z" fill="#3FA06A"/>`;
     return `<svg class="world" viewBox="0 0 400 770" preserveAspectRatio="xMidYMax meet">
       <rect x="-800" y="-800" width="2000" height="1600" fill="#CDEBFA"/>
       <circle cx="338" cy="150" r="30" fill="#FFD35A"/>
@@ -535,11 +484,9 @@
         ${fruit(76, 246, 'A')}${fruit(118, 266, 'b')}${fruit(60, 294, 'c')}
         ${lbl(94, 398, 'Letters')}
       </g>
-      <g class="spot" data-sec="numbers">
-        <rect x="216" y="376" width="172" height="130" fill="transparent"/>
+      <g class="pond">
         <ellipse cx="300" cy="430" rx="80" ry="46" fill="#7CC8EE" stroke="#5FB3DD" stroke-width="5"/>
-        ${pad(266, 422, '1')}${pad(308, 444, '2')}${pad(338, 414, '3')}
-        ${lbl(300, 500, 'Numbers')}
+        ${pad(266, 422)}${pad(308, 444)}${pad(338, 414)}
       </g>
       <g class="spot" data-sec="sounds">
         <rect x="22" y="418" width="140" height="138" fill="transparent"/>
@@ -637,12 +584,12 @@
   const goHome = () => { if (history.state && history.state.in) history.back(); else home(); };
 
   /* ---------- the journey ----------
-     Events from js/curriculum.js: introductions of one new letter, number or tricky word,
+     Events from js/curriculum.js: introductions of one new letter or tricky word,
      game events built from what she has learned (dustiest first), and a challenge gate at
      the end of each section. Everything learned becomes cards (js/cards.js) and a prize in
      her collection. */
   const CUR = CURRICULUM, EVENTS = CUR.EVENTS;
-  const journey = () => (store.journey = Object.assign({ at: 0, done: {}, stars: {} }, store.journey || {}));
+  const journey = () => (store.journey = Object.assign({ at: 0, done: {}, stars: {}, v: 2 }, store.journey || {}));
   const learned = () => (store.learned = store.learned || {});
   const isLearned = it => !!learned()[CUR.itemKey(it)];
   const eventLabel = ev => (ev.kind === 'intro' ? ev.item.v : ev.kind === 'gate' ? '🏆' : CUR.GAME_INFO[ev.game].icon);
@@ -652,7 +599,6 @@
   // which skills (cards) each kind of item has
   function skillsOf(it) {
     if (it.type === 'letter') return ['see', D.START[it.v] ? 'sound' : null, 'write'].filter(Boolean);
-    if (it.type === 'number') return ['see', it.v !== '0' ? 'count' : null, 'write'].filter(Boolean);
     if (it.type === 'sight') return ['see', it.v.length > 1 ? 'spell' : null].filter(Boolean);
     return ['read', 'spell'];
   }
@@ -672,11 +618,6 @@
       if (skill === 'sound') return Q('soundPic', Math.min(lv('soundPic'), 1), v);
       return Q('writeLetters', 1, v);
     }
-    if (type === 'number') {
-      if (skill === 'see') return Q('findNumber', +v > 10 ? 1 : 0, v);
-      if (skill === 'count') return Q('count', +v <= 5 ? 0 : 1, v);
-      return Q('traceNumbers', 2, v, { make: () => writeQ(v, 'recall', 'traceNumbers') });
-    }
     if (type === 'sight') {
       if (skill === 'see') return Q('sightWords', sightLevel(v), v);
       return Q('buildSight', 0, v);
@@ -691,21 +632,13 @@
   // the steps of an introduction
   function introItems(it) {
     const v = it.v, k = sk => CARDS.key(it.type, v, sk), steps = [];
-    const S = (step, extra) => Object.assign({ step, item: it, g: byId[{ letter: 'findLetter', number: 'findNumber', sight: 'sightWords' }[it.type]] }, extra);
+    const S = (step, extra) => Object.assign({ step, item: it, g: byId[{ letter: 'findLetter', sight: 'sightWords' }[it.type]] }, extra);
     if (it.type === 'letter') {
       steps.push(S('show'), S('word'));
       steps.push(Object.assign(cardQuestion(k('see')), { lv: 1 }));
       steps.push({ g: byId.traceLetters, lv: 0, force: v });
       steps.push(S('sayit'));
       if (D.START[v]) steps.push(Object.assign(cardQuestion(k('sound')), { lv: 0 }));
-      steps.push(cardQuestion(k('write')));
-    } else if (it.type === 'number') {
-      steps.push(S('show'));
-      if (v !== '0') steps.push(S('count'));
-      steps.push(cardQuestion(k('see')));
-      steps.push({ g: byId.traceNumbers, lv: 0, make: () => writeQ(v, 'trace', 'traceNumbers') });
-      steps.push(S('sayit'));
-      if (v !== '0') steps.push(cardQuestion(k('count')));
       steps.push(cardQuestion(k('write')));
     } else {
       steps.push(S('show'));
@@ -729,7 +662,6 @@
     if (game === 'hunt') return pick(k => /^letter:.*:see$/.test(k), 8);
     if (game === 'writing') return pick(k => /:write$/.test(k), 6);
     if (game === 'sounds') return pick(k => /^letter:.*:sound$/.test(k), 8);
-    if (game === 'counting') return pick(k => /^number:.*:(count|see)$/.test(k), 8);
     if (game === 'sight') return pick(k => /^sight:/.test(k), 8);
     // spelling and reading: words made only from her letters; new ones join the collection
     const words = CUR.wordsFrom(L), skill = game === 'spelling' ? 'spell' : 'read';
@@ -739,9 +671,8 @@
     return shuffle(fresh.map(w => cardQuestion(`word:${w}:${skill}`)).concat(old.map(cardQuestion))).slice(0, 8);
   }
 
-  // a challenge gate: everything from this section, mixed
   // A challenge gate: everything from this section, mixed. Questions are dealt out by kind
-  // in turn (find it, hear it, write it, count it, big and little, what does it start with,
+  // in turn (find it, hear it, write it, big and little, what does it start with,
   // spell it, read it), so every kind comes up and the same game never comes twice running.
   // A gate is the one place "what does this start with?" fits: she knows several letters by
   // then, so the answer isn't given away.
@@ -758,9 +689,6 @@
     addKind('soundPic', k => /^letter:.*:sound$/.test(k), k => cardQuestion(k));
     addKind('firstSound', k => /^letter:.*:sound$/.test(k), k => Object.assign(cardQuestion(k), { g: byId.firstSound, lv: 0 }));
     addKind('writeLetter', k => /^letter:.*:write$/.test(k), k => cardQuestion(k));
-    addKind('findNumber', k => /^number:.*:see$/.test(k), k => cardQuestion(k));
-    addKind('count', k => /^number:.*:count$/.test(k), k => cardQuestion(k));
-    addKind('writeNumber', k => /^number:.*:write$/.test(k), k => cardQuestion(k));
     addKind('sight', k => /^sight:.*:see$/.test(k), k => cardQuestion(k));
     addKind('buildSight', k => /^sight:.*:spell$/.test(k), k => cardQuestion(k));
     addKind('spell', k => /^word:.*:spell$/.test(k), k => cardQuestion(k));
@@ -829,7 +757,6 @@
     let body = '', line = [];
     if (it.step === 'show') {
       if (type === 'letter') { body = `<div class="intro-card"><div class="intro-big">${esc(T(v))}<span>${esc(v)}</span></div></div>`; line = [LINES.newLetter, LINES.thisIs(T(v)), sound(v)]; }
-      else if (type === 'number') { body = `<div class="intro-card"><div class="intro-big num">${esc(v)}</div></div>`; line = [LINES.newNumber, LINES.thisIs(v), v === '0' ? LINES.zero : null]; }
       else { body = `<div class="intro-card"><div class="intro-big word">${esc(v)}</div></div>`; line = [LINES.newWord, LINES.wordSays(v), LINES.tricky]; }
     } else if (it.step === 'word') {
       const [w, e] = CUR.LETTER_WORD[v];
@@ -839,13 +766,9 @@
       const sent = D.SENTENCES.flat().find(x => x.split(' ').some(w => same(w, v)));
       body = `<div class="intro-card"><div class="intro-sentence">${sent.split(' ').map(x => `<b class="${same(x, v) ? 'hl' : ''}">${esc(x)}</b>`).join(' ')}</div></div>`;
       line = [LINES.sentence(sent), LINES.inSentence(v)];
-    } else if (it.step === 'count') {
-      const e = one(D.COUNTABLES), n = +v;
-      body = `<div class="intro-card"><div class="count-box ${n > 6 ? 'nbig' : 'nsmall'} tapcount">${Array.from({ length: n }, (_, k) => `<button class="ct" data-k="${k}">${e}</button>`).join('')}</div><div class="count-sum" id="sum"></div></div>`;
-      line = [LINES.countThem];
     } else if (it.step === 'sayit') {
       const shown = type === 'letter' ? `${esc(T(v))}<span>${esc(v)}</span>` : esc(v);
-      body = `<div class="intro-card"><div class="intro-big ${type === 'letter' ? '' : type === 'number' ? 'num' : 'word'}">${shown}</div>
+      body = `<div class="intro-card"><div class="intro-big ${type === 'letter' ? '' : 'word'}">${shown}</div>
         <button class="mic" id="mic" aria-label="Say it">🎤</button><p class="mic-note" id="micnote"></p></div>`;
       line = [LINES.sayIt(type === 'letter' ? T(v) : v)];
     }
@@ -856,19 +779,7 @@
     const sp = $app.querySelector('#speak');
     sp.onclick = () => say(line);
     const ready = () => { if (alive(id)) go.disabled = false; };
-    if (it.step === 'count') {
-      let c = 0;
-      $app.querySelectorAll('.ct').forEach(b => b.onclick = () => {
-        if (b.classList.contains('on')) return;
-        b.classList.add('on'); c++;
-        b.dataset.n = c;
-        tone([440 + c * 40], 0.08, 'triangle', 0.12);
-        say(LINES.number(c));
-        $app.querySelector('#sum').textContent = c;
-        if (c === +v) { palState('happy', 1200); setTimeout(() => { say([LINES.number(c), LINES.great]); ready(); }, 700); }
-      });
-      say(line);
-    } else if (it.step === 'sayit') {
+    if (it.step === 'sayit') {
       const mic = $app.querySelector('#mic'), note = $app.querySelector('#micnote');
       const canRec = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder);
       if (!canRec) { mic.textContent = '✓'; mic.setAttribute('aria-label', 'I said it'); }
@@ -998,7 +909,6 @@
         <div class="bar"><button class="round" id="x" aria-label="Back">←</button><h2>My prizes</h2><span></span></div>
         <button class="bigbtn polish ${dusty ? '' : 'calm'}" id="polish">✨ <span>${dusty ? 'Polish my prizes' : 'All shiny!'}</span></button>
         ${group('Letters', all('letter'))}
-        ${group('Numbers', all('number'))}
         ${group('Tricky words', all('sight'))}
         ${words.length ? group('Words I can spell', words) : ''}
       </div>`;
@@ -1007,7 +917,7 @@
     $app.querySelectorAll('.ptile[data-k]').forEach(b => b.onclick = () => {
       const [type, v] = b.dataset.k.split(':');
       b.classList.remove('wiggle-tile'); void b.offsetWidth; b.classList.add('wiggle-tile');
-      const name = type === 'letter' ? LINES.letter(T(v)) : type === 'number' ? LINES.number(v) : LINES.word(v);
+      const name = type === 'letter' ? LINES.letter(T(v)) : LINES.word(v);
       say(b.className.match(/dust-[123]/) ? [name, LINES.dusty] : name);
     });
     if (cleaned && cleaned.size) {
@@ -1284,10 +1194,9 @@
   // which card a free-play question practises, if she has learned that item
   function freeCard(q) {
     const g = run.g && run.g.id, v = q.key;
-    const m = { findLetter: ['letter', 'see'], soundPic: ['letter', 'sound'], writeLetters: ['letter', 'write'], findNumber: ['number', 'see'], count: ['number', 'count'], traceNumbers: ['number', 'write'], sightWords: ['sight', 'see'], buildSight: ['sight', 'spell'], readWord: ['word', 'read'], buildWord: ['word', 'spell'] }[g];
+    const m = { findLetter: ['letter', 'see'], soundPic: ['letter', 'sound'], writeLetters: ['letter', 'write'], sightWords: ['sight', 'see'], buildSight: ['sight', 'spell'], readWord: ['word', 'read'], buildWord: ['word', 'spell'] }[g];
     if (!m || v == null) return null;
     if (g === 'writeLetters' && /[A-Z]/.test(v)) return null; // capitals aren't cards yet
-    if (g === 'traceNumbers' && q.mode !== 'recall') return null;
     const k = CARDS.key(m[0], String(v).toLowerCase() === 'i' && m[0] === 'sight' ? 'I' : String(v).toLowerCase(), m[1]);
     return store.cards && store.cards[k] ? k : null;
   }
@@ -1515,7 +1424,7 @@
       run.clean = false;
       if (ms) setTimeout(() => { if (alive(id) && !busy) hc.clearRect(0, 0, S, S); }, ms);
     }
-    const rivals = ch => (/\d/.test(ch) ? '0123456789' : ch === ch.toUpperCase() ? D.UPPER.join('') : D.LOWER.join('')).split('');
+    const rivals = ch => (ch === ch.toUpperCase() ? D.UPPER : D.LOWER);
     function checkFree() {
       const ch = q.glyphs[gi];
       const r = TRACE.written(strokes, ch, M, drawGlyph, rivals(ch));
@@ -1875,7 +1784,7 @@
     };
     $app.querySelector('#reset').onclick = () => {
       if (!window.confirm('Clear all progress, prizes, stickers, hats and colours? Voice recordings are kept.')) return;
-      store.games = {}; store.items = {}; store.stickers = []; store.path = {}; store.write = {}; store.journey = {}; store.learned = {}; store.cards = {};
+      store.games = {}; store.items = {}; store.stickers = []; store.path = {}; store.write = {}; store.journey = { v: 2 }; store.learned = {}; store.cards = {};
       Object.assign(store.pal, { hat: null, hats: [], color: 'brown', colors: ['brown'], scenes: ['garden'], scene: 'garden' });
       save(); rerender();
     };
@@ -1958,6 +1867,39 @@
 
   // Progress from the earlier version of the path: letters she had passed are collected,
   // and the journey starts at the first thing she hasn't learned.
+  // Numbers left the app in Nov 2026. Carry an older journey over to the new list of events:
+  // what she has done stays done, she carries on from the same place, and number prizes and
+  // cards are put away.
+  (function dropNumbers() {
+    const old = store.journey;
+    if (old && !old.v) {
+      const OLD = CUR.OLD_EVENTS();
+      const id = e => (e.kind === 'intro' ? CUR.itemKey(e.item) : e.kind === 'gate' ? 'gate:' + e.section : null);
+      const doneIds = new Set(), starsOf = {};
+      OLD.forEach((e, i) => { if (id(e) && (old.done && old.done[i] || i < (old.at || 0))) { doneIds.add(id(e)); starsOf[id(e)] = (old.stars || {})[i]; } });
+      // where she was: the first letter, tricky word or gate she hadn't done yet
+      let at = old.at || 0;
+      while (at < OLD.length && (!id(OLD[at]) || OLD[at].item && OLD[at].item.type === 'number')) at++;
+      const nextId = at < OLD.length ? id(OLD[at]) : null;
+      let newAt = nextId ? EVENTS.findIndex(e => id(e) === nextId) : EVENTS.length - 1;
+      // if she was on a game or a number, a game just before that spot comes first
+      const wasOn = (old.at || 0) < OLD.length ? id(OLD[old.at || 0]) : null;
+      if (wasOn !== nextId && newAt > 0 && EVENTS[newAt - 1].kind === 'game') newAt--;
+      const js = { at: Math.max(0, newAt), done: {}, stars: {}, v: 2 };
+      EVENTS.forEach((e, i) => {
+        if (i < js.at || doneIds.has(id(e))) js.done[i] = true;
+        if (starsOf[id(e)]) js.stars[i] = starsOf[id(e)];
+      });
+      while (js.done[js.at] && js.at < EVENTS.length - 1) js.at++;
+      store.journey = js;
+    }
+    if (old) store.journey.v = 2;
+    Object.keys(store.cards || {}).forEach(k => { if (k.startsWith('number:')) delete store.cards[k]; });
+    Object.keys(store.learned || {}).forEach(k => { if (k.startsWith('number:')) delete store.learned[k]; });
+    ['findNumber', 'count', 'traceNumbers'].forEach(g => { if (store.games) delete store.games[g]; });
+    save();
+  })();
+
   (function migrate() {
     if (store.journey || !(store.path || store.write)) return;
     const old = store.path || { at: 0 }, done = new Set();
