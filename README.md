@@ -12,21 +12,25 @@ Reading and writing games for little learners. A small installable web app: no a
 
 The app checks for a new version when it opens and whenever it comes back to the front, and reloads itself on the home screen. There is also a **Check for updates** button on the grown-ups page.
 
-## Pip's path
+## How it works
 
-The app opens on Pip's path: a trail of stops in the order letters are usually taught in Australian schools (s a t p i n m d g o c k e u r h b f l j v w x y z q).
+Guidelines for development are in [CLAUDE.md](CLAUDE.md).
 
-- **Letter stops** mix a few activities around one letter: find it, match big and little, hear what starts with it, and write it.
-- **Word stops** come every few letters and only use letters met so far (pin, tap, ant after the first six).
-- **Number stops** and **words-to-know stops** come in between, and the path ends with sentences.
-- **Writing** each letter moves from tracing, to copying it from a model, to writing it from memory, as she manages each one without help. Each stop also reviews a letter she has found tricky.
-- Every stop wins a sticker. Every fifth stop wins something bigger: a new hat, a new colour for Pip, or a new background for Pip's place.
+**The journey** opens the app: six areas (Sandy Beach, Fern Forest, Rocky Hills, Rainbow River, Snowy Mountain, Starry Sky) that teach letters in the order Australian schools use (s a t p, i n m d, g o c k, e u r h, b f l j, v w x y z q), with numbers 0 to 10 and tricky words (I, the, to, no, go, he, she, we, me, was, you, my, are) along the way.
 
-Free play (🌳) still has every game at any level. The grown-ups page shows where she is on the path, can move her forward or back, and lists which letters she copies or writes from memory.
+- **Introductions** teach one new thing: Pip shows it and shows it in a word, then she picks it from a set, traces it, says it out loud (it's recorded and played back to her, not checked), finds a picture that starts with it, and writes it from memory (👀 peeks and a faint guide help if she's stuck). Each one adds a prize to her collection.
+- **Game events** in between practise one kind of thing (letter hunt, writing, sounds, spelling, reading, counting, tricky words), using only what she has learned, dustiest first. Spelling and reading only use words made from her letters, and add those words to her collection.
+- **Challenge gates** end each area with a mixed test and a big celebration (a new hat, colour or background).
 
-## Pip's place
+**Flashcard learning.** Every skill is a card (seeing s, hearing s, writing s, reading "cat", spelling "cat"...). Cards come back after about 10 minutes, then 1, 3, 7, 14 and 30 days; a clean answer moves a card on, a mistake brings it back sooner.
 
-Stickers live in a sticker book along the bottom, with their names written underneath. Drag one up into the yard, drag it back down to put it away, or tidy everything up with the basket. Tap a sticker and it wiggles while Pip says its name. Food stickers can be fed to Pip. Pip can be moved around, and wears the hats, colours and backgrounds won on the path.
+**The prize room (🏆)** shows her whole collection. Prizes that are due for practice, or recently tripped her up, get dusty and cobwebby. "Polish my prizes" runs a short review of the dustiest ones, and each prize she cleans sparkles.
+
+Free play (🌳) still has every game at any level.
+
+## Pip's home
+
+Stickers live in a sticker book along the bottom, with their names written underneath. Drag one up into the yard, drag it back down to put it away, or tidy everything up with the basket. Tap a sticker and it wiggles while Pip says its name. Food stickers can be fed to Pip. Pip can be moved around, and wears the hats, colours and backgrounds won on the journey. After two minutes here, Pip suggests playing a game for a new prize.
 
 ## The games
 
@@ -51,9 +55,9 @@ Wrong answers just fade out; there is no "fail".
 
 ## Pip the platypus
 
-- Pip lives on the home screen, which is a little world: the letter tree, number pond, sound bell, word house and big pencil each open a set of games. Tap Pip to wake it up.
-- The games are framed as helping Pip: feeding it letters, numbers and words, rebuilding words that fell apart, sorting out mixed-up sentences.
-- Each finished round wins something for Pip's place: stickers she can drag around the yard, and now and then a new hat or colour for Pip.
+- Pip is a curious, kind friend who walks the journey with her and speaks as "I" (Pip's gender is left open).
+- The games are framed as helping Pip: feeding Pip letters, numbers and words, rebuilding words that fell apart, sorting out mixed-up sentences.
+- Free play (🌳) is a little world: the letter tree, number pond, sound bell, word house and big pencil each open a set of games.
 - Pip's name can be changed on the grown-ups page.
 
 ## Your voice
@@ -62,7 +66,7 @@ Grown-ups page → **Record your voice**. You can record the 26 letter sounds, u
 
 ## Grown-ups page
 
-Hold the ⚙ on the home screen. It shows first-go scores and tricky items for every game, lets you set levels by hand, change the voice speed, and copy a progress summary.
+Hold the ⚙ on the home screen. It shows where she is on the journey (and can move her along), how many prizes she has and which are dusty, first-go scores for every game, and lets you set free-play levels, change the voice speed, and copy a progress summary.
 
 Levels also adjust themselves: two strong rounds in a row moves up, a hard round moves back.
 

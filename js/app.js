@@ -487,6 +487,16 @@
     else again = digit ? LINES.writeNumber(t) : t === T ? LINES.writeBig(T) : LINES.writeLittle(T);
     return { type: 'trace', mode, key: String(t), glyphs: [String(t)], again, say: intro(gameId, again) };
   }
+  GAMES.push({
+    id: 'buildSight', sec: 'words', icon: '💎', name: 'Build tricky words', hidden: true,
+    levels: ['Just the letters', 'Extra letters'],
+    make(lv) {
+      const w = choose(this.id + lv, D.SIGHT.flat().filter(x => x.length > 1));
+      const letters = w.split('');
+      const again = LINES.buildSight(w);
+      return { type: 'build', key: w, again, say: intro(this.id, again), answer: letters, tiles: shuffle(letters.concat(lv ? others(D.LOWER, 2, letters) : [])), after: LINES.word(w), letters: true };
+    }
+  });
   GAMES.splice(GAMES.findIndex(g => g.id === 'traceNumbers'), 0, {
     id: 'writeLetters', sec: 'writing', icon: '✍️', name: 'Write letters', n: 6,
     levels: ['Copy small letters', 'Small letters from memory', 'Copy capitals', 'Capitals from memory'],
@@ -605,7 +615,7 @@
   }
 
   function sectionSheet(sec) {
-    const cards = GAMES.filter(g => g.sec === sec.id).map(g => `<button class="card" data-game="${g.id}">
+    const cards = GAMES.filter(g => g.sec === sec.id && !g.hidden).map(g => `<button class="card" data-game="${g.id}">
         <span class="card-icon ${/^[\w]+$/.test(g.icon) ? 'txt' : ''}">${g.icon}</span>
         <span class="card-name">${esc(g.name)}</span>
       </button>`).join('');
@@ -626,142 +636,294 @@
   window.addEventListener('popstate', () => { closeSheets(); stopMic(); home(); });
   const goHome = () => { if (history.state && history.state.in) history.back(); else home(); };
 
-  /* ---------- Pip's path ----------
-     Stops in the order letters are taught. Each stop mixes a few activities around one
-     letter (find it, hear it, write it), with word stops that only use letters met so far,
-     and number and "words to know" stops in between. */
-  const PATH = (() => {
-    const stops = [], known = [];
-    let num = 0, sight = 0;
-    D.ORDER.forEach((l, i) => {
-      known.push(l);
-      stops.push({ kind: 'letter', letter: l, known: known.slice() });
-      const n = i + 1;
-      if (n >= 6 && n % 3 === 0) stops.push({ kind: 'words', known: known.slice() });
-      if (n % 5 === 2 && num < 3) stops.push({ kind: 'numbers', set: num++ });
-      if (n >= 12 && n % 6 === 0 && sight < 3) stops.push({ kind: 'sight', set: sight++ });
-    });
-    stops.push({ kind: 'words', known: known.slice() });
-    stops.push({ kind: 'sentences', set: 0 }, { kind: 'sentences', set: 1 });
-    return stops;
-  })();
-  const pathState = () => (store.path = Object.assign({ at: 0, done: {}, stars: {} }, store.path || {}));
-  const stopLabel = st => ({ letter: st.letter, words: 'cat', numbers: '123', sight: 'the', sentences: 'I see' }[st.kind]);
-  const isMilestone = i => (i + 1) % 5 === 0;
+  /* ---------- the journey ----------
+     Events from js/curriculum.js: introductions of one new letter, number or tricky word,
+     game events built from what she has learned (dustiest first), and a challenge gate at
+     the end of each section. Everything learned becomes cards (js/cards.js) and a prize in
+     her collection. */
+  const CUR = CURRICULUM, EVENTS = CUR.EVENTS;
+  const journey = () => (store.journey = Object.assign({ at: 0, done: {}, stars: {} }, store.journey || {}));
+  const learned = () => (store.learned = store.learned || {});
+  const isLearned = it => !!learned()[CUR.itemKey(it)];
+  const eventLabel = ev => (ev.kind === 'intro' ? ev.item.v : ev.kind === 'gate' ? '🏆' : CUR.GAME_INFO[ev.game].icon);
+  const knownItems = type => Object.keys(learned()).filter(k => k.startsWith(type + ':')).map(k => k.slice(type.length + 1));
+  const sightLevel = w => Math.max(0, D.SIGHT.findIndex(set => set.includes(w)));
 
-  // the letter she has found hardest so far, among those she has met
-  function trickiest(known) {
-    let best = null, bestScore = -Infinity;
-    for (const l of known) {
-      let seen = 0, missed = 0;
-      for (const [k, v] of Object.entries(store.items)) if (k.endsWith('|' + l) || k.endsWith('|' + l.toUpperCase())) { seen += v[0]; missed += v[1]; }
-      const score = (missed + 0.5) / (seen + 1) + Math.random() * 0.3 - (l === pathState().lastReview ? 1 : 0); // not the same one twice running
-      if (score > bestScore) { bestScore = score; best = l; }
+  // which skills (cards) each kind of item has
+  function skillsOf(it) {
+    if (it.type === 'letter') return ['see', D.START[it.v] ? 'sound' : null, 'write'].filter(Boolean);
+    if (it.type === 'number') return ['see', it.v !== '0' ? 'count' : null, 'write'].filter(Boolean);
+    if (it.type === 'sight') return ['see', it.v.length > 1 ? 'spell' : null].filter(Boolean);
+    return ['read', 'spell'];
+  }
+  function learn(it, box = 0) {
+    const k = CUR.itemKey(it);
+    if (!learned()[k]) learned()[k] = Date.now();
+    skillsOf(it).forEach(sk => CARDS.ensure(store, CARDS.key(it.type, it.v, sk), box));
+  }
+
+  // a question that practises one card
+  function cardQuestion(k) {
+    const [type, v, skill] = k.split(':');
+    const lv = id => gstat(id).level;
+    const Q = (id, l, force, extra) => Object.assign({ g: byId[id], lv: l, force, card: k }, extra);
+    if (type === 'letter') {
+      if (skill === 'see') return Q('findLetter', Math.max(1, Math.min(lv('findLetter'), 2)), v);
+      if (skill === 'sound') return Q('soundPic', Math.min(lv('soundPic'), 1), v);
+      return Q('writeLetters', 1, v);
     }
-    pathState().lastReview = best;
-    return best;
+    if (type === 'number') {
+      if (skill === 'see') return Q('findNumber', +v > 10 ? 1 : 0, v);
+      if (skill === 'count') return Q('count', +v <= 5 ? 0 : 1, v);
+      return Q('traceNumbers', 2, v, { make: () => writeQ(v, 'recall', 'traceNumbers') });
+    }
+    if (type === 'sight') {
+      if (skill === 'see') return Q('sightWords', sightLevel(v), v);
+      return Q('buildSight', 0, v);
+    }
+    if (skill === 'read') return Q('readWord', Math.min(lv('readWord'), 1), v);
+    return Q('buildWord', Math.min(lv('buildWord'), 1), v);
   }
-  const writeStage = t => (store.write || {})[t] || 0;
-  function writeItem(t, review) {
-    const stage = writeStage(t), digit = /\d/.test(t);
-    if (digit) return { g: byId.traceNumbers, lv: stage, force: t };
-    const up = t === t.toUpperCase();
-    if (stage === 0 && !review) return { g: byId.traceLetters, lv: up ? 1 : 0, force: t };
-    // traced it once: copy it next time; copied it cleanly: write it from memory
-    return { g: byId.writeLetters, lv: (up ? 2 : 0) + (stage >= 2 ? 1 : 0), force: t };
-  }
-  function stopItems(i) {
-    const st = PATH[i], lv = id => gstat(id).level;
-    const ps = pathState(), quick = ps.quick; // she aced the last stop: a shorter one
-    const It = (id, force, l) => ({ g: byId[id], lv: l == null ? Math.min(lv(id), byId[id].levels.length - 1) : l, force });
-    const items = [];
-    if (st.kind === 'letter') {
-      const L = st.letter, earlier = st.known.filter(x => x !== L);
-      items.push(It('findLetter', L, Math.max(1, lv('findLetter'))));
-      if (!quick) items.push(It('matchCase', L, i % 2));
-      if (D.START[L]) {
-        items.push(It('soundPic', L));
-        if (!quick) items.push(It('firstSound', L, Math.min(lv('firstSound'), 1)));
-      }
-      items.push(writeItem(L));
-      if (earlier.length) {
-        const r = trickiest(earlier);
-        items.push(writeStage(r) >= 1 ? writeItem(r, true) : It('findLetter', r, 1));
-      }
-    } else if (st.kind === 'words') {
-      const words = shuffle(D.CVC.filter(([w]) => [...w].every(c => st.known.includes(c))).map(x => x[0]));
-      const rl = Math.min(lv('readWord'), 1);
-      words.slice(0, 2).forEach(w => items.push(It('readWord', w, rl)));
-      if (words[2]) items.push(It('buildWord', words[2], Math.min(lv('buildWord'), 1)));
-      if (words[3]) items.push(It('firstSound', words[3], 2));
-      items.push(writeItem(trickiest(st.known), true));
-    } else if (st.kind === 'numbers') {
-      const [lo, hi] = [[1, 5], [1, 10], [6, 20]][st.set];
-      const pick = () => lo + rnd(hi - lo + 1);
-      items.push(It('count', pick(), st.set), It('count', pick(), st.set));
-      items.push(It('findNumber', pick(), Math.min(st.set, 2)), It('findNumber', pick(), Math.min(st.set, 2)));
-      items.push(writeItem(String(rnd(10))));
-    } else if (st.kind === 'sight') {
-      shuffle(D.SIGHT[st.set]).slice(0, 3).forEach(w => items.push(It('sightWords', w, st.set)));
-      items.push(It('readWord', null, Math.min(lv('readWord'), 1)), It('buildWord', null, Math.min(lv('buildWord'), 1)));
+
+  // the same word, ignoring a capital at the start of a sentence (but "I" is always I)
+  const same = (w, v) => w === v || (v !== 'I' && w.toLowerCase() === v);
+
+  // the steps of an introduction
+  function introItems(it) {
+    const v = it.v, k = sk => CARDS.key(it.type, v, sk), steps = [];
+    const S = (step, extra) => Object.assign({ step, item: it, g: byId[{ letter: 'findLetter', number: 'findNumber', sight: 'sightWords' }[it.type]] }, extra);
+    if (it.type === 'letter') {
+      steps.push(S('show'), S('word'));
+      steps.push(Object.assign(cardQuestion(k('see')), { lv: 1 }));
+      steps.push({ g: byId.traceLetters, lv: 0, force: v });
+      steps.push(S('sayit'));
+      if (D.START[v]) steps.push(Object.assign(cardQuestion(k('sound')), { lv: 0 }));
+      steps.push(cardQuestion(k('write')));
+    } else if (it.type === 'number') {
+      steps.push(S('show'));
+      if (v !== '0') steps.push(S('count'));
+      steps.push(cardQuestion(k('see')));
+      steps.push({ g: byId.traceNumbers, lv: 0, make: () => writeQ(v, 'trace', 'traceNumbers') });
+      steps.push(S('sayit'));
+      if (v !== '0') steps.push(cardQuestion(k('count')));
+      steps.push(cardQuestion(k('write')));
     } else {
-      items.push(It('sentence', null, st.set), It('sentence', null, st.set), It('sightWords', null, 2), It('readWord', null, 2));
-      items.push(writeItem(trickiest(D.ORDER), true));
+      steps.push(S('show'));
+      if (D.SENTENCES.flat().some(x => x.split(' ').some(w => same(w, v)))) steps.push(S('sentence'));
+      steps.push(cardQuestion(k('see')));
+      if (v.length > 1) steps.push(cardQuestion(k('spell')));
+      steps.push(S('sayit'));
+      steps.push({ g: byId.traceWords, lv: 0, make: () => ({ type: 'trace', mode: 'trace', key: v, glyphs: v.split(''), word: v, emoji: '💎', again: LINES.writeWord(v), say: LINES.writeWord(v), after: LINES.word(v) }) });
     }
-    return items;
+    return steps;
   }
 
-  function startStop(i) {
-    const items = stopItems(i);
+  // a game event: one kind of activity, from what she has learned, dustiest first
+  function gameItems(game) {
+    const L = knownItems('letter'), have = k => !!store.cards && !!store.cards[k];
+    const pick = (filter, n) => {
+      let keys = CARDS.queue(store, n, k => have(k) && filter(k));
+      while (keys.length && keys.length < n) keys = keys.concat(keys).slice(0, n); // few learned yet: repeat
+      return keys.map(cardQuestion);
+    };
+    if (game === 'hunt') return pick(k => /^letter:.*:see$/.test(k), 8);
+    if (game === 'writing') return pick(k => /:write$/.test(k), 6);
+    if (game === 'sounds') return pick(k => /^letter:.*:sound$/.test(k), 8);
+    if (game === 'counting') return pick(k => /^number:.*:(count|see)$/.test(k), 8);
+    if (game === 'sight') return pick(k => /^sight:/.test(k), 8);
+    // spelling and reading: words made only from her letters; new ones join the collection
+    const words = CUR.wordsFrom(L), skill = game === 'spelling' ? 'spell' : 'read';
+    const fresh = shuffle(words.filter(w => !isLearned({ type: 'word', v: w }))).slice(0, 3);
+    fresh.forEach(w => learn({ type: 'word', v: w }));
+    const old = CARDS.queue(store, 8 - fresh.length, k => k.startsWith('word:') && k.endsWith(':' + skill) && !fresh.some(w => k === `word:${w}:${skill}`));
+    return shuffle(fresh.map(w => cardQuestion(`word:${w}:${skill}`)).concat(old.map(cardQuestion))).slice(0, 8);
+  }
+
+  // a challenge gate: everything from this section, mixed
+  function gateItems(si) {
+    const keys = EVENTS.filter(e => e.kind === 'intro' && e.section === si).map(e => CUR.itemKey(e.item));
+    const words = new Set(CUR.wordsFrom(CUR.SECTIONS[si].letters.concat(...CUR.SECTIONS.slice(0, si).map(x => x.letters))));
+    const mine = k => keys.includes(CARDS.itemOf(k)) || (k.startsWith('word:') && words.has(k.split(':')[1]));
+    // one card for every item from the section, of a random skill, so every kind of question
+    // comes up; then the dustiest cards to fill the rest
+    const picked = [];
+    keys.forEach(item => {
+      const cs = CARDS.cardsOf(store, item).map(([k]) => k);
+      if (cs.length) picked.push(one(cs));
+    });
+    const wordCards = shuffle(Object.keys(store.cards || {}).filter(k => k.startsWith('word:') && mine(k))).slice(0, 2);
+    const fill = CARDS.queue(store, 10, k => mine(k) && !picked.includes(k) && !wordCards.includes(k));
+    return shuffle(picked.concat(wordCards, fill).slice(0, 10)).map(cardQuestion);
+  }
+
+  function startEvent(i) {
+    const ev = EVENTS[i];
+    let items;
+    if (ev.kind === 'intro') { learn(ev.item); items = introItems(ev.item); }
+    else if (ev.kind === 'game') items = gameItems(ev.game);
+    else items = gateItems(ev.section);
+    if (!items.length) items = [cardQuestion(CARDS.key('letter', 's', 'see'))];
+    save();
     clearTimeout(sleepTimer);
     awake = true;
     pushNav();
-    run = { path: i, items, g: items[0].g, level: items[0].lv, i: 0, n: items.length, first: 0, used: new Set(), id: ++runId, marks: [] };
+    run = { event: i, items, g: items[0].g, level: items[0].lv || 0, i: 0, n: items.length, first: 0, used: new Set(), id: ++runId, marks: [] };
     nextQ();
   }
 
+  // polishing: the dustiest few prizes, with every dusty card of each, so they come out clean
+  function startPolish() {
+    const dusty = Object.keys(learned()).map(it => [it, CARDS.itemDust(store, it)]).filter(([, d]) => d > 0)
+      .sort((a, b) => b[1] - a[1] || Math.random() - 0.5);
+    if (!dusty.length) return say(LINES.allClean);
+    const keys = [], before = {};
+    for (const [it, d] of dusty) {
+      const cs = CARDS.cardsOf(store, it).filter(([, c]) => CARDS.dust(c) > 0).map(([k]) => k);
+      if (keys.length && keys.length + cs.length > 10) continue;
+      keys.push(...cs); before[it] = d;
+      if (keys.length >= 7) break;
+    }
+    pushNav();
+    const items = shuffle(keys).map(cardQuestion);
+    run = { polish: true, before, cleaned: new Set(), items, g: items[0].g, level: items[0].lv || 0, i: 0, n: items.length, first: 0, used: new Set(), id: ++runId, marks: [] };
+    nextQ();
+  }
+
+  /* ----- the steps of an introduction that aren't questions ----- */
+  const T = v => v.toUpperCase();
+  function renderStep(it) {
+    const v = it.item.v, type = it.item.type;
+    const next = '<button class="bigbtn next-step" id="go" disabled>➜</button>';
+    let body = '', line = [];
+    if (it.step === 'show') {
+      if (type === 'letter') { body = `<div class="intro-card"><div class="intro-big">${esc(v)}<span>${esc(T(v))}</span></div></div>`; line = [LINES.newLetter, LINES.thisIs(T(v)), sound(v)]; }
+      else if (type === 'number') { body = `<div class="intro-card"><div class="intro-big num">${esc(v)}</div></div>`; line = [LINES.newNumber, LINES.thisIs(v), v === '0' ? LINES.zero : null]; }
+      else { body = `<div class="intro-card"><div class="intro-big word">${esc(v)}</div></div>`; line = [LINES.newWord, LINES.wordSays(v), LINES.tricky]; }
+    } else if (it.step === 'word') {
+      const [w, e] = CUR.LETTER_WORD[v];
+      body = `<div class="intro-card"><div class="intro-pic">${e}</div><div class="intro-word">${[...w].map(c => `<b class="${c === v ? 'hl' : ''}">${esc(c)}</b>`).join('')}</div></div>`;
+      line = [LINES.word(w), LINES.inWord(T(v), w)];
+    } else if (it.step === 'sentence') {
+      const sent = D.SENTENCES.flat().find(x => x.split(' ').some(w => same(w, v)));
+      body = `<div class="intro-card"><div class="intro-sentence">${sent.split(' ').map(x => `<b class="${same(x, v) ? 'hl' : ''}">${esc(x)}</b>`).join(' ')}</div></div>`;
+      line = [LINES.sentence(sent), LINES.inSentence(v)];
+    } else if (it.step === 'count') {
+      const e = one(D.COUNTABLES), n = +v;
+      body = `<div class="intro-card"><div class="count-box ${n > 6 ? 'nbig' : 'nsmall'} tapcount">${Array.from({ length: n }, (_, k) => `<button class="ct" data-k="${k}">${e}</button>`).join('')}</div><div class="count-sum" id="sum"></div></div>`;
+      line = [LINES.countThem];
+    } else if (it.step === 'sayit') {
+      const shown = type === 'letter' ? `${esc(v)}<span>${esc(T(v))}</span>` : esc(v);
+      body = `<div class="intro-card"><div class="intro-big ${type === 'letter' ? '' : type === 'number' ? 'num' : 'word'}">${shown}</div>
+        <button class="mic" id="mic" aria-label="Say it">🎤</button><p class="mic-note" id="micnote"></p></div>`;
+      line = [LINES.sayIt(type === 'letter' ? T(v) : v)];
+    }
+    shell(`<div class="prompt">${palBtn()}</div>${body}<div class="step-foot">${next}</div>`);
+    const go = $app.querySelector('#go'), id = run.id;
+    const done = () => { if (!alive(id)) return; run.marks[run.i] = true; run.first++; run.i++; save(); nextQ(); };
+    go.onclick = () => { tap(); done(); };
+    const sp = $app.querySelector('#speak');
+    sp.onclick = () => say(line);
+    const ready = () => { if (alive(id)) go.disabled = false; };
+    if (it.step === 'count') {
+      let c = 0;
+      $app.querySelectorAll('.ct').forEach(b => b.onclick = () => {
+        if (b.classList.contains('on')) return;
+        b.classList.add('on'); c++;
+        b.dataset.n = c;
+        tone([440 + c * 40], 0.08, 'triangle', 0.12);
+        say(LINES.number(c));
+        $app.querySelector('#sum').textContent = c;
+        if (c === +v) { palState('happy', 1200); setTimeout(() => { say([LINES.number(c), LINES.great]); ready(); }, 700); }
+      });
+      say(line);
+    } else if (it.step === 'sayit') {
+      const mic = $app.querySelector('#mic'), note = $app.querySelector('#micnote');
+      const canRec = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder);
+      if (!canRec) { mic.textContent = '✓'; mic.setAttribute('aria-label', 'I said it'); }
+      mic.onclick = async () => {
+        if (mic.classList.contains('live')) return;
+        if (!canRec) { say(one(LINES.heard)); return ready(); }
+        hush();
+        let stream;
+        try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
+        catch (e) { mic.textContent = '✓'; say(LINES.noMic); note.textContent = ''; return ready(); }
+        const chunks = [], rec = new MediaRecorder(stream);
+        rec.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data); };
+        rec.onstop = async () => {
+          stream.getTracks().forEach(t => t.stop());
+          mic.classList.remove('live');
+          if (!alive(id)) return;
+          if (chunks.length) {
+            const url = URL.createObjectURL(new Blob(chunks, { type: rec.mimeType || 'audio/webm' }));
+            note.textContent = '👂';
+            await playUrl(url);
+            URL.revokeObjectURL(url);
+          }
+          if (!alive(id)) return;
+          note.textContent = '';
+          palState('happy', 1200);
+          say(one(LINES.heard));
+          ready();
+        };
+        mic.classList.add('live');
+        rec.start();
+        setTimeout(() => { if (rec.state === 'recording') rec.stop(); }, 2200);
+      };
+      say(line);
+    } else {
+      say(line).then(ready);
+      setTimeout(ready, 4000);
+    }
+  }
+
+  /* ----- the journey screen ----- */
   function pathScreen() {
     runId++;
     hush();
-    const ps = pathState(), id = runId;
-    const GAP = 104, TOP = 150, W = 400;
-    const pos = i => ({ x: 200 + 112 * Math.sin(i * 0.95), y: TOP + i * GAP });
-    const H = TOP + PATH.length * GAP + 40;
+    const js = journey();
+    const GAP = 104, TOP = 210, W = 400, BANNER = 70;
+    const ys = []; let y = TOP;
+    EVENTS.forEach((ev, i) => { if (i && ev.section !== EVENTS[i - 1].section) y += BANNER; ys.push(y); y += GAP; });
+    const pos = i => ({ x: 200 + 112 * Math.sin(i * 0.95), y: ys[i] });
+    const H = y + 40;
     let d = '';
-    PATH.forEach((_, i) => {
+    EVENTS.forEach((_, i) => {
       const p = pos(i);
       if (!i) d = `M${p.x} ${p.y}`;
-      else { const a = pos(i - 1); d += ` C${a.x} ${a.y + GAP * 0.55} ${p.x} ${p.y - GAP * 0.55} ${p.x} ${p.y}`; }
+      else { const a = pos(i - 1), g = p.y - a.y; d += ` C${a.x} ${a.y + g * 0.55} ${p.x} ${p.y - g * 0.55} ${p.x} ${p.y}`; }
     });
+    const banners = CUR.SECTIONS.map((sec, si) => { const i = EVENTS.findIndex(e => e.section === si); return `<g class="banner" transform="translate(200 ${pos(i).y - 78})"><rect x="-110" y="-22" width="220" height="40" rx="20"/><text y="6">${sec.icon} ${esc(sec.name)}</text></g>`; }).join('');
     const deco = ['🌳', '🌿', '🌼', '🍄', '🌳', '🪨', '🌸', '🌲'];
-    const decor = PATH.map((_, i) => { const p = pos(i); const x = p.x > 200 ? p.x - 150 - (i % 3) * 12 : p.x + 120 + (i % 2) * 14; return `<text x="${x}" y="${p.y + 10}" class="deco">${deco[i % deco.length]}</text>`; }).join('');
-    const nodes = PATH.map((st, i) => {
-      const p = pos(i), state = ps.done[i] ? 'done' : i === ps.at ? 'now' : i < ps.at ? 'done' : 'later';
-      const stars = ps.stars[i] || 0;
-      return `<g class="stop ${state} k-${st.kind}" data-i="${i}" transform="translate(${p.x} ${p.y})">
-        ${state === 'now' ? '<circle r="44" class="halo"/>' : ''}
-        <circle r="34" class="disc"/>
-        <text y="${st.kind === 'letter' ? 11 : 8}" class="${st.kind === 'letter' ? 'big' : 'small'}">${esc(stopLabel(st))}</text>
-        ${state === 'done' ? `<text y="58" class="stars">${'★'.repeat(stars)}<tspan class="off">${'★'.repeat(3 - stars)}</tspan></text>` : ''}
-        ${isMilestone(i) && !ps.done[i] ? '<text x="34" y="-22" class="gift">🎁</text>' : ''}
+    const decor = EVENTS.map((_, i) => { const p = pos(i); const x = p.x > 200 ? p.x - 150 - (i % 3) * 12 : p.x + 120 + (i % 2) * 14; return `<text x="${x}" y="${p.y + 10}" class="deco">${deco[i % deco.length]}</text>`; }).join('');
+    const nodes = EVENTS.map((ev, i) => {
+      const p = pos(i), state = js.done[i] || i < js.at ? 'done' : i === js.at ? 'now' : 'later';
+      const stars = js.stars[i] || 0, label = eventLabel(ev);
+      const big = ev.kind === 'intro' && label.length <= 2;
+      return `<g class="stop ${state} k-${ev.kind} ${ev.kind === 'intro' ? 't-' + ev.item.type : ''}" data-i="${i}" transform="translate(${p.x} ${p.y})">
+        ${state === 'now' ? `<circle r="${ev.kind === 'gate' ? 52 : 44}" class="halo"/>` : ''}
+        <circle r="${ev.kind === 'gate' ? 42 : 34}" class="disc"/>
+        <text y="${big ? 11 : ev.kind === 'intro' ? 7 : 10}" class="${big ? 'big' : ev.kind === 'intro' ? 'small' : 'icon'}">${esc(label)}</text>
+        ${state === 'done' && ev.kind !== 'intro' ? `<text y="${ev.kind === 'gate' ? 66 : 58}" class="stars">${'★'.repeat(stars)}<tspan class="off">${'★'.repeat(3 - stars)}</tspan></text>` : ''}
+        ${ev.kind === 'intro' && state !== 'later' ? `<text x="30" y="-22" class="gift">${CUR.prizeOf(ev.item).e}</text>` : ''}
       </g>`;
     }).join('');
-    const pp = pos(ps.at);
+    const pp = pos(Math.min(js.at, EVENTS.length - 1));
     const pipX = pp.x > 200 ? pp.x - 118 : pp.x + 40;
     $app.innerHTML = `
       <div class="screen path-screen">
         <header class="hud path-hud">
           <h1>My <b>A</b><b>B</b><b>C</b></h1>
           <div class="home-btns">
+            <button class="chip" id="room" aria-label="My prizes">🏆</button>
+            <button class="chip" id="place" aria-label="${esc(N())}'s home">🏡</button>
             <button class="chip" id="world" aria-label="Play anything">🌳</button>
-            <button class="chip" id="place" aria-label="${esc(N())}'s place">🏡 <span>${store.stickers.length}</span></button>
             <button class="chip quiet" id="grown" aria-label="Grown-ups (hold)">⚙</button>
           </div>
         </header>
         <div class="path-scroll" id="ps">
           <svg class="path-map" viewBox="0 0 ${W} ${H}" width="100%" style="aspect-ratio:${W}/${H}">
             <path d="${d}" class="trail-edge"/><path d="${d}" class="trail"/>
-            ${decor}${nodes}
+            ${banners}${decor}${nodes}
             <g class="path-pal" id="ppal" transform="translate(${pipX} ${pp.y - 56})">
               <svg width="80" height="82" viewBox="${PAL.BOX}" overflow="visible">${PAL.g(store.pal, 'idle')}</svg>
             </g>
@@ -772,15 +934,60 @@
     requestAnimationFrame(() => { const r = sc.querySelector('.stop.now') || sc.querySelector('.stop'); if (r) r.scrollIntoView({ block: 'center' }); });
     sc.querySelectorAll('.stop').forEach(g => g.onclick = () => {
       const i = +g.dataset.i;
-      if (i <= ps.at) { tap(); startStop(i); }
+      if (i <= js.at || js.done[i]) { tap(); startEvent(i); }
       else { boop(); say(LINES.path.locked); }
     });
     $app.querySelector('#ppal').onclick = () => { pipTune(); palState('happy', 1300); say(N() === 'Pip' ? LINES.hello : [LINES.hello[0], `I'm ${N()}.`, LINES.hello[2]]); };
     $app.querySelector('#world').onclick = () => { tap(); hub = 'world'; world(); };
     $app.querySelector('#place').onclick = () => { tap(); place(); };
+    $app.querySelector('#room').onclick = () => { tap(); prizeRoom(); };
     holdForGrownups($app.querySelector('#grown'));
     if (updateReady) applyUpdate(); else autoUpdate();
-    if (!alive(id)) return;
+  }
+
+  /* ----- the prize room ----- */
+  function prizeRoom(cleaned) {
+    if (!cleaned) pushNav();
+    runId++;
+    hush();
+    const id = runId;
+    const tile = (it, have) => {
+      const pz = CUR.prizeOf(it), k = CUR.itemKey(it);
+      if (!have) return `<div class="ptile locked"><span class="pe">?</span></div>`;
+      const dst = cleaned && cleaned.has(k) ? (run.before[k] || 2) : CARDS.itemDust(store, k);
+      return `<button class="ptile dust-${dst} ${cleaned && cleaned.has(k) ? 'to-clean' : ''}" data-k="${esc(k)}"><span class="pe">${pz.e}</span><b>${esc(pz.label)}</b></button>`;
+    };
+    const all = type => EVENTS.filter(e => e.kind === 'intro' && e.item.type === type).map(e => e.item);
+    const group = (title, items) => items.length ? `<h3 class="room-h">${title}</h3><div class="room-grid">${items.map(it => tile(it, isLearned(it))).join('')}</div>` : '';
+    const words = knownItems('word').map(v => ({ type: 'word', v }));
+    const dusty = Object.keys(learned()).some(k => CARDS.itemDust(store, k) > 0);
+    $app.innerHTML = `
+      <div class="screen room">
+        <div class="bar"><button class="round" id="x" aria-label="Back">←</button><h2>My prizes</h2><span></span></div>
+        <button class="bigbtn polish ${dusty ? '' : 'calm'}" id="polish">✨ <span>${dusty ? 'Polish my prizes' : 'All shiny!'}</span></button>
+        ${group('Letters', all('letter'))}
+        ${group('Numbers', all('number'))}
+        ${group('Tricky words', all('sight'))}
+        ${words.length ? group('Words I can spell', words) : ''}
+      </div>`;
+    $app.querySelector('#x').onclick = goHome;
+    $app.querySelector('#polish').onclick = () => { tap(); startPolish(); };
+    $app.querySelectorAll('.ptile[data-k]').forEach(b => b.onclick = () => {
+      const [type, v] = b.dataset.k.split(':');
+      b.classList.remove('wiggle-tile'); void b.offsetWidth; b.classList.add('wiggle-tile');
+      const name = type === 'letter' ? LINES.letter(T(v)) : type === 'number' ? LINES.number(v) : LINES.word(v);
+      say(b.className.match(/dust-[123]/) ? [name, LINES.dusty] : name);
+    });
+    if (cleaned && cleaned.size) {
+      const tiles = [...$app.querySelectorAll('.ptile.to-clean')];
+      if (tiles[0]) tiles[0].scrollIntoView({ block: 'center' });
+      tiles.forEach((t, n) => setTimeout(() => {
+        if (!alive(id)) return;
+        t.className = t.className.replace(/dust-\d/, 'dust-0') + ' shine';
+        tone([880 + n * 60, 1320 + n * 60], 0.07, 'sine', 0.1);
+      }, 700 + n * 450));
+      setTimeout(() => { if (alive(id)) { palState('happy', 1200); say(one(LINES.sparkly)); confetti(); } }, 800 + tiles.length * 450);
+    } else if (!cleaned) say(dusty ? LINES.roomDusty : LINES.room);
   }
 
   function holdForGrownups(g) {
@@ -964,6 +1171,17 @@
     placeYP(); drawYard(); drawTray();
     // new stickers stop being "new" once she has seen the book
     setTimeout(() => { store.stickers.forEach(st => { st.fresh = false; }); save(); }, 4000);
+    // after two minutes here, Pip suggests playing a game for a new prize
+    const pid = runId;
+    setTimeout(() => {
+      if (!alive(pid) || !document.querySelector('.place')) return;
+      palState('happy', 1500);
+      say(LINES.nudge);
+      const b = document.createElement('button');
+      b.className = 'bigbtn nudge'; b.innerHTML = '➜ <span>Let\'s play!</span>';
+      b.onclick = () => { tap(); hub = 'path'; goHome(); };
+      $app.querySelector('.place').appendChild(b);
+    }, 120000);
   }
 
   /* ---------- running a round ---------- */
@@ -986,7 +1204,7 @@
         <div class="bar">
           <button class="round" id="x" aria-label="Home">✕</button>
           <div class="dots">${dots}</div>
-          ${run.items ? `<span class="stop-tag">${esc(stopLabel(PATH[run.path]))}</span>` : `<button class="lvl" id="lvl" aria-label="Change level">Level ${level + 1}</button>`}
+          ${run.polish ? '<span class="stop-tag">✨</span>' : run.items ? `<span class="stop-tag">${esc(eventLabel(EVENTS[run.event]))}</span>` : `<button class="lvl" id="lvl" aria-label="Change level">Level ${level + 1}</button>`}
         </div>
         ${body}
       </div>`;
@@ -1015,16 +1233,47 @@
   }
 
   function nextQ() {
-    if (run.i >= run.n) return run.items ? finishStop() : finish();
+    if (run.i >= run.n) return run.polish ? finishPolish() : run.items ? finishEvent() : finish();
+    let it = null;
     if (run.items) {
-      const it = run.items[run.i];
-      run.g = it.g; run.level = it.lv; run.force = it.force;
+      it = run.items[run.i];
+      run.g = it.g; run.level = it.lv || 0; run.force = it.force;
+      if (it.step) { run.q = null; return renderStep(it); }
     }
-    const q = run.g.make(run.level);
+    const q = it && it.make ? it.make() : run.g.make(run.level);
+    if (it && it.card) q.card = it.card;
+    window.MYABC_Q = q; // lets the automated tests answer correctly
     run.q = q;
     run.clean = true;
     ({ pick: renderPick, build: renderBuild, trace: renderTrace })[q.type](q);
     say(q.say);
+  }
+
+  // which card a free-play question practises, if she has learned that item
+  function freeCard(q) {
+    const g = run.g && run.g.id, v = q.key;
+    const m = { findLetter: ['letter', 'see'], soundPic: ['letter', 'sound'], writeLetters: ['letter', 'write'], findNumber: ['number', 'see'], count: ['number', 'count'], traceNumbers: ['number', 'write'], sightWords: ['sight', 'see'], buildSight: ['sight', 'spell'], readWord: ['word', 'read'], buildWord: ['word', 'spell'] }[g];
+    if (!m || v == null) return null;
+    if (g === 'writeLetters' && /[A-Z]/.test(v)) return null; // capitals aren't cards yet
+    if (g === 'traceNumbers' && q.mode !== 'recall') return null;
+    const k = CARDS.key(m[0], String(v).toLowerCase() === 'i' && m[0] === 'sight' ? 'I' : String(v).toLowerCase(), m[1]);
+    return store.cards && store.cards[k] ? k : null;
+  }
+  function gradeCard(q, ok) {
+    const k = q.card || freeCard(q);
+    if (!k) return;
+    CARDS.grade(store, k, ok);
+    if (run.polish && ok && CARDS.itemDust(store, CARDS.itemOf(k)) === 0) run.cleaned.add(CARDS.itemOf(k));
+  }
+  // polishing: each answer shows the prize being wiped clean
+  function polishToast(k, ok) {
+    const pz = CUR.prizeOf({ type: k.split(':')[0], v: k.split(':')[1] });
+    const t = document.createElement('div');
+    t.className = 'polish-toast ' + (ok ? 'clean' : '');
+    t.innerHTML = `<span>${pz.e}</span><i>${ok ? '✨' : '🧽'}</i>`;
+    document.body.appendChild(t);
+    if (ok) tone([1175, 1568], 0.06, 'sine', 0.08);
+    setTimeout(() => t.remove(), 1300);
   }
 
   const praiseClips = () => Clips.ids().filter(k => k.startsWith('praise-'));
@@ -1043,11 +1292,13 @@
       const w = (store.write = store.write || {});
       w[q.key] = Math.max(w[q.key] || 0, Math.min(2, ['trace', 'copy', 'recall'].indexOf(q.mode || 'trace') + 1));
     }
+    gradeCard(q, run.clean);
     run.marks[run.i] = run.clean;
     if (run.clean) run.first++;
     save();
     chime();
     palState('happy', 1500);
+    if (run.polish && q.card) polishToast(q.card, run.clean);
     await Promise.all([say(cheer(q)), wait(950)]);
     if (!alive(id)) return;
     run.i++;
@@ -1249,6 +1500,10 @@
     function check() {
       if (free) return checkFree();
       const r = TRACE.judge(shape, inkC.getImageData(0, 0, M, M).data, tolPx);
+      // a scribble over the whole pad can touch every part of a wide letter: not more than 3x its length in ink
+      let len = 0;
+      for (const st of strokes) for (let k = 1; k < st.length; k++) len += Math.hypot(st[k].x - st[k - 1].x, st[k].y - st[k - 1].y);
+      if (r.pass && (len > 3 * Math.max(shape.len, 20) || TRACE.scribbly(strokes))) r.pass = false;
       if (r.pass) { hc.clearRect(0, 0, S, S); return true; }
       // Only hint once she has stopped drawing for a moment, not between strokes.
       clearTimeout(hintTimer);
@@ -1305,7 +1560,7 @@
       run.clean = false;
       if (gi < q.glyphs.length - 1) { gi++; setGlyph(); }
       else {
-        busy = true; run.marks[run.i] = false;
+        busy = true; run.marks[run.i] = false; gradeCard(q, false);
         const s = (store.items[run.g.id + run.level + '|' + q.key] = itemStat(run.g.id + run.level, q.key));
         s[0]++; s[1]++; save(); run.i++; nextQ();
       }
@@ -1387,48 +1642,66 @@
     return { type: 'sticker', e, label: 'New sticker!', line: LINES.reward.sticker };
   }
 
-  function finishStop() {
-    const { path: i, first, n } = run;
-    const ps = pathState();
-    const pct = first / n, stars = pct >= 0.85 ? 3 : pct >= 0.5 ? 2 : 1;
-    const firstTime = !ps.done[i];
-    ps.done[i] = true;
-    ps.stars[i] = Math.max(ps.stars[i] || 0, stars);
-    ps.quick = pct >= 0.95;
-    if (i === ps.at && ps.at < PATH.length - 1) ps.at++;
-    const r = (firstTime && isMilestone(i) && milestoneReward(Math.floor(i / 5))) || stickerReward();
+  function finishEvent() {
+    const i = run.event, ev = EVENTS[i], js = journey();
+    const graded = run.items.filter(x => !x.step).length || 1;
+    const firstGo = run.marks.filter((m, k) => m && !run.items[k].step).length;
+    const pct = firstGo / graded, stars = pct >= 0.85 ? 3 : pct >= 0.5 ? 2 : 1;
+    const firstTime = !js.done[i];
+    js.done[i] = true;
+    js.stars[i] = Math.max(js.stars[i] || 0, stars);
+    if (i === js.at) while (js.done[js.at] && js.at < EVENTS.length - 1) js.at++; // past anything already done
+    let r, title = '', extra = '';
+    if (ev.kind === 'intro') {
+      const pz = CUR.prizeOf(ev.item);
+      r = { type: 'collect', e: pz.e, label: 'A new prize for your collection!', line: LINES.newPrize };
+      extra = `<div class="prize collect">${pz.e}<b>${esc(pz.label)}</b></div>`;
+    } else if (ev.kind === 'gate') {
+      const sec = CUR.SECTIONS[ev.section];
+      title = `<h2 class="gate-title">${sec.icon} ${esc(sec.name)} done!</h2>`;
+      r = (firstTime && milestoneReward(ev.section)) || stickerReward();
+      r.line = [LINES.gatePass, r.line];
+    } else r = stickerReward();
     save();
     runId++;
     const look = r.type === 'color' ? Object.assign({}, store.pal, { color: r.c }) : store.pal;
-    const more = i + 1 < PATH.length;
+    const more = i + 1 < EVENTS.length;
     $app.innerHTML = `
-      <div class="screen end sec-${run.g.sec}">
-        <div class="stars">${[0, 1, 2].map(k => `<span class="${k < stars ? 'on' : ''}" style="animation-delay:${k * 0.18}s">★</span>`).join('')}</div>
+      <div class="screen end ${ev.kind === 'gate' ? 'gate-end' : ''} sec-${run.g.sec}">
+        ${title}
+        ${ev.kind === 'intro' ? '' : `<div class="stars">${[0, 1, 2].map(k => `<span class="${k < stars ? 'on' : ''}" style="animation-delay:${k * 0.18}s">★</span>`).join('')}</div>`}
         <div class="prize-row">
           <div class="end-pal">${PAL.svg(look, 'happy')}</div>
-          ${r.type === 'sticker' ? `<div class="prize">${r.e}</div>` : r.type === 'scene' ? `<div class="prize scene-prize">${SCENE_ICON[r.sc]}</div>` : ''}
+          ${extra || (r.type === 'sticker' ? `<div class="prize">${r.e}</div>` : r.type === 'scene' ? `<div class="prize scene-prize">${SCENE_ICON[r.sc]}</div>` : '')}
         </div>
         <p class="prize-label">${esc(r.label)}</p>
         <div class="end-btns">
-          ${more ? '<button class="bigbtn" id="next">➜ <span>Next stop</span></button>' : ''}
-          <button class="bigbtn alt" id="homeb">🗺 <span>Path</span></button>
+          ${more ? '<button class="bigbtn" id="next">➜ <span>Next</span></button>' : ''}
+          <button class="bigbtn alt" id="homeb">🗺</button>
+          <button class="bigbtn alt" id="toroom">🏆</button>
         </div>
-        <button class="linkbtn" id="toplace">🏡 ${esc(N())}'s place</button>
-        <p class="note">${first} of ${n} first go</p>
       </div>`;
     fanfare();
     confetti();
-    say([Clips.has('finish') ? { clip: 'finish' } : LINES.finished, r.line, more ? LINES.path.next : null]);
-    if (more) $app.querySelector('#next').onclick = () => { history.replaceState(null, ''); startStop(Math.min(i + 1, ps.at)); };
+    if (ev.kind === 'gate') setTimeout(confetti, 900);
+    say([LINES.finished].concat(r.line, more && ev.kind !== 'gate' ? LINES.path.next : null));
+    // next: the following event if it's open, otherwise wherever she is up to
+    if (more) $app.querySelector('#next').onclick = () => { history.replaceState(null, ''); const j = journey(); startEvent(i + 1 <= j.at || j.done[i + 1] ? i + 1 : j.at); };
     $app.querySelector('#homeb').onclick = goHome;
-    $app.querySelector('#toplace').onclick = () => { history.replaceState(null, ''); place(); };
+    $app.querySelector('#toroom').onclick = () => { history.replaceState(null, ''); prizeRoom(); };
+  }
+
+  function finishPolish() {
+    save();
+    history.replaceState(null, '');
+    prizeRoom(run.cleaned);
   }
 
   /* ---------- updates ----------
      The app is a page that can stay open for days, so it checks GitHub itself:
      on launch, whenever it comes back to the front, and from the grown-ups page.
      It fingerprints its own files; if they changed, it reloads at the next quiet moment. */
-  const APP_FILES = ['index.html', 'css/style.css', 'js/data.js', 'js/pal.js', 'js/lines.js', 'js/trace.js', 'js/app.js', 'sw.js', 'audio/index.json'];
+  const APP_FILES = ['index.html', 'css/style.css', 'js/data.js', 'js/pal.js', 'js/lines.js', 'js/trace.js', 'js/cards.js', 'js/curriculum.js', 'js/app.js', 'sw.js', 'audio/index.json'];
   let loadedPrint = null, updateReady = false, lastCheck = 0;
   async function fingerprint() {
     let h = 5381;
@@ -1475,9 +1748,11 @@
       .slice(0, 6).map(([k]) => k.split('|')[1]);
   }
   function summaryText() {
-    const ps = pathState();
+    const js = journey(), ev = EVENTS[js.at];
     const lines = [`My ABC progress, ${new Date().toISOString().slice(0, 10)}`,
-      `Path: at stop ${ps.at + 1} of ${PATH.length} (${stopLabel(PATH[ps.at])}). Writes from memory: ${D.ORDER.filter(l => writeStage(l) >= 2).join(' ') || 'none'}. Copies: ${D.ORDER.filter(l => writeStage(l) === 1).join(' ') || 'none'}.`];
+      `Journey: event ${js.at + 1} of ${EVENTS.length} (${CUR.SECTIONS[ev.section].name}, ${ev.kind} ${eventLabel(ev)}).`,
+      `Collection: ${Object.keys(learned()).map(k => k.split(':')[1]).join(' ') || 'nothing yet'}.`,
+      `Dusty: ${dustyList().join(' ') || 'nothing'}.`];
     GAMES.forEach(g => {
       const st = gstat(g.id);
       if (!st.rounds.length) { lines.push(`${g.name}: not played yet`); return; }
@@ -1488,11 +1763,13 @@
     return lines.join('\n');
   }
 
+  const dustyList = () => Object.keys(learned()).filter(k => CARDS.itemDust(store, k) >= 2).map(k => k.split(':')[1]);
+
   function grownups() {
     pushNav();
     runId++;
     hush();
-    const rows = SECTIONS.map(sec => `<h3 class="g-sec sec-${sec.id}">${sec.name}</h3>` + GAMES.filter(g => g.sec === sec.id).map(g => {
+    const rows = SECTIONS.map(sec => `<h3 class="g-sec sec-${sec.id}">${sec.name}</h3>` + GAMES.filter(g => g.sec === sec.id && !g.hidden).map(g => {
       const st = gstat(g.id);
       const recent = st.rounds.slice(-5).map(r => `${r.s}/${r.n}`).join(' · ') || 'not played yet';
       const t = tricky(g.id);
@@ -1513,11 +1790,11 @@
           <button id="sfx">Sounds: <b>${store.settings.sfx ? 'on' : 'off'}</b></button>
           <button id="copy">Copy progress summary</button>
         </div>
-        <h3 class="g-sec">Path</h3>
+        <h3 class="g-sec">Journey</h3>
         <div class="g-row">
-          <div class="g-head"><b>Stop ${pathState().at + 1} of ${PATH.length}: ${esc(stopLabel(PATH[pathState().at]))}</b><span>${Object.keys(pathState().done).length} done</span></div>
-          <div class="g-levels"><button id="pback">◀ Back a stop</button><button id="pfwd">Skip ahead a stop ▶</button></div>
-          <div class="g-meta">Writing from memory: ${D.ORDER.filter(l => writeStage(l) >= 2).join(' ') || 'none yet'}<br>Copying: ${D.ORDER.filter(l => writeStage(l) === 1).join(' ') || 'none yet'}</div>
+          <div class="g-head"><b>${esc(CUR.SECTIONS[EVENTS[journey().at].section].name)}: ${esc(EVENTS[journey().at].kind === 'intro' ? 'learning ' + eventLabel(EVENTS[journey().at]) : EVENTS[journey().at].kind === 'gate' ? 'challenge' : CUR.GAME_INFO[EVENTS[journey().at].game].name)}</b><span>${journey().at + 1} of ${EVENTS.length}</span></div>
+          <div class="g-jour"><button id="pback">◀ Back one</button><button id="pfwd">Skip ahead one ▶</button></div>
+          <div class="g-meta">Collected: ${Object.keys(learned()).length} prizes<br>Dusty now: ${esc(dustyList().join(' ') || 'nothing')}</div>
           <button id="update">Check for updates${loadedPrint ? ` <span class="ver">(version ${loadedPrint})</span>` : ''}</button>
         </div>
         ${rows}
@@ -1531,8 +1808,14 @@
     });
     const rerender = () => { history.replaceState(null, ''); grownups(); };
     $app.querySelector('#pname').onchange = e => { store.pal.name = e.target.value.trim().slice(0, 12) || 'Pip'; save(); };
-    $app.querySelector('#pback').onclick = () => { const ps = pathState(); ps.at = Math.max(0, ps.at - 1); save(); rerender(); };
-    $app.querySelector('#pfwd').onclick = () => { const ps = pathState(); ps.done[ps.at] = true; ps.at = Math.min(PATH.length - 1, ps.at + 1); save(); rerender(); };
+    $app.querySelector('#pback').onclick = () => { const js = journey(); js.at = Math.max(0, js.at - 1); save(); rerender(); };
+    $app.querySelector('#pfwd').onclick = () => {
+      const js = journey(), ev = EVENTS[js.at];
+      if (ev.kind === 'intro') learn(ev.item, 1); // skipping a new item still collects it
+      js.done[js.at] = true;
+      while (js.done[js.at] && js.at < EVENTS.length - 1) js.at++;
+      save(); rerender();
+    };
     $app.querySelector('#voice').onclick = () => { history.replaceState(null, ''); voiceScreen(); };
     $app.querySelector('#rate').onclick = () => { const r = store.settings.rate; store.settings.rate = r < 0.8 ? 0.85 : r < 0.95 ? 1 : 0.7; save(); rerender(); say(LINES.speedTest); };
     $app.querySelector('#sfx').onclick = () => { store.settings.sfx = !store.settings.sfx; save(); rerender(); };
@@ -1549,8 +1832,8 @@
       catch (err) { window.prompt('Copy this:', text); }
     };
     $app.querySelector('#reset').onclick = () => {
-      if (!window.confirm('Clear all scores, levels, stickers, hats and colours? Voice recordings are kept.')) return;
-      store.games = {}; store.items = {}; store.stickers = []; store.path = {}; store.write = {};
+      if (!window.confirm('Clear all progress, prizes, stickers, hats and colours? Voice recordings are kept.')) return;
+      store.games = {}; store.items = {}; store.stickers = []; store.path = {}; store.write = {}; store.journey = {}; store.learned = {}; store.cards = {};
       Object.assign(store.pal, { hat: null, hats: [], color: 'brown', colors: ['brown'], scenes: ['garden'], scene: 'garden' });
       save(); rerender();
     };
@@ -1630,6 +1913,30 @@
       setTimeout(() => { if (r.state === 'recording') r.stop(); }, id.startsWith('snd-') ? 2500 : 5000);
     };
   }
+
+  // Progress from the earlier version of the path: letters she had passed are collected,
+  // and the journey starts at the first thing she hasn't learned.
+  (function migrate() {
+    if (store.journey || !(store.path || store.write)) return;
+    const old = store.path || { at: 0 }, done = new Set();
+    let stopsSeen = 0;
+    D.ORDER.forEach((l, i) => { // the old path: one stop per letter with others in between
+      if (stopsSeen < (old.at || 0)) done.add(l);
+      stopsSeen++;
+      const n = i + 1;
+      if (n >= 6 && n % 3 === 0) stopsSeen++;
+      if (n % 5 === 2 && n <= 12) stopsSeen++;
+      if (n >= 12 && n % 6 === 0 && n <= 24) stopsSeen++;
+    });
+    Object.keys(store.write || {}).forEach(l => { if (/^[a-z]$/.test(l)) done.add(l); });
+    done.forEach(l => learn({ type: 'letter', v: l }, (store.write || {})[l] >= 2 ? 2 : 1));
+    const js = journey();
+    js.at = EVENTS.findIndex(e => e.kind === 'intro' && !isLearned(e.item));
+    if (js.at < 0) js.at = EVENTS.length - 1;
+    for (let i = 0; i < js.at; i++) js.done[i] = true;
+    EVENTS.forEach((e, i) => { if (e.kind === 'intro' && isLearned(e.item)) js.done[i] = true; }); // letters she already has
+    save();
+  })();
 
   // Recordings load before the first screen so they are ready for the first game.
   Promise.race([Promise.all([Clips.ready, Voice.load]), wait(1500)]).then(home);

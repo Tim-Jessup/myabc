@@ -46,8 +46,9 @@ def check_names(model, voices, lang):
 def list_lines():
     js = ("const vm=require('vm'),fs=require('fs');"
           f"vm.runInThisContext(fs.readFileSync({json.dumps(os.path.join(ROOT, 'js/data.js'))},'utf8')+';globalThis.DATA=DATA;');"
+          f"vm.runInThisContext(fs.readFileSync({json.dumps(os.path.join(ROOT, 'js/curriculum.js'))},'utf8')+';globalThis.CURRICULUM=CURRICULUM;');"
           f"const L=require({json.dumps(os.path.join(ROOT, 'js/lines.js'))});"
-          "console.log(JSON.stringify(L.all(DATA).map(s=>[L.key(s),s])));")
+          "console.log(JSON.stringify(L.all(DATA, CURRICULUM).map(s=>[L.key(s),s])));")
     return json.loads(subprocess.check_output(['node', '-e', js], text=True))
 
 

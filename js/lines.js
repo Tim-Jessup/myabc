@@ -18,7 +18,8 @@ const LINES = (() => {
       traceLetters: 'Help me learn to write.',
       traceNumbers: 'Help me write numbers.',
       traceWords: 'Help me write words.',
-      writeLetters: 'Can you write letters all by yourself?'
+      writeLetters: 'Can you write letters all by yourself?',
+      buildSight: 'Can you build these tricky words?'
     },
     // writing without a guide
     copyLetter: T => `Can you write ${T}, just like this?`,
@@ -32,6 +33,31 @@ const LINES = (() => {
     path: { go: "Let's go!", next: 'Hooray! On to the next stop!', locked: "We're not there yet. Let's keep walking!" },
     sticker: name => `${/^[aeiou]/.test(name) ? 'An' : 'A'} ${name}!`,
     tidy: 'All tidy!',
+    // introducing something new
+    newLetter: "Here's a new letter!",
+    newNumber: "Here's a new number!",
+    newWord: "Here's a new word!",
+    thisIs: x => `This is ${x}.`,
+    zero: 'Zero means none at all!',
+    inWord: (T, w) => `Can you see the ${T} in ${w}?`,
+    wordSays: w => `This word says ${w}.`,
+    tricky: "It's a tricky word, so we just remember it.",
+    inSentence: w => `Can you see ${w}?`,
+    countThem: "Let's count them. Tap each one!",
+    great: 'Great counting!',
+    sayIt: x => `Can you say ${x}? Press the button and say it!`,
+    heard: ['I heard you!', 'Great saying!', 'Lovely!'],
+    noMic: 'Say it out loud!',
+    buildSight: w => `Build the word ${w}.`,
+    newPrize: 'A new prize for your collection!',
+    gatePass: 'You passed the challenge! Hooray!',
+    // the prize room
+    room: 'Look at all your prizes!',
+    roomDusty: 'Some of your prizes are a bit dusty. Shall we polish them?',
+    dusty: "This one's a bit dusty!",
+    allClean: 'Everything is sparkling!',
+    sparkly: ['Sparkly!', 'So shiny!', 'Look how they shine!'],
+    nudge: "I'd love a new prize. Shall we play a game?",
     findLetter: T => `Find the letter ${T}.`,
     bigToLittle: T => `This is big ${T}. Find little ${T}.`,
     littleToBig: T => `This is little ${T}. Find big ${T}.`,
@@ -62,7 +88,7 @@ const LINES = (() => {
   };
 
   // Every line the app can say, for making the recordings.
-  L.all = D => {
+  L.all = (D, C) => {
     const out = new Set();
     const add = x => [].concat(x).forEach(s => out.add(s));
     const letters = D.UPPER;
@@ -74,6 +100,12 @@ const LINES = (() => {
     letters.forEach(T => add([L.copyLetter(T), L.writeLittle(T), L.writeBig(T)]));
     for (let n = 0; n <= 9; n++) add([L.copyNumber(n), L.writeNumber(n)]);
     Object.values(D.STICKER_NAMES).forEach(n => add(L.sticker(n)));
+    add([L.newLetter, L.newNumber, L.newWord, L.zero, L.tricky, L.countThem, L.great, L.noMic, L.newPrize, L.gatePass, L.room, L.roomDusty, L.dusty, L.allClean, L.nudge]);
+    add(L.heard); add(L.sparkly); add(L.number(0)); add(L.number(10));
+    letters.forEach(T => add([L.thisIs(T), L.sayIt(T)]));
+    for (let n = 0; n <= 10; n++) add([L.thisIs(n), L.sayIt(n), L.findNumber(n), L.copyNumber(n), L.writeNumber(n), L.traceNumber(n)]);
+    D.SIGHT.flat().forEach(w => add([L.word(w), L.wordSays(w), L.inSentence(w), L.sayIt(w), L.writeWord(w), L.buildSight(w)]));
+    if (C) Object.entries(C.LETTER_WORD).forEach(([l, [w]]) => add([L.word(w), L.inWord(l.toUpperCase(), w)]));
     add(Object.values(L.reward)); add(D.PRAISE); add(D.YUM);
     letters.forEach(T => add([L.findLetter(T), L.bigToLittle(T), L.littleToBig(T), L.letter(T), L.traceLetter(T), L.wantStarts(T), L.whichStarts(T)]));
     for (let n = 0; n <= 99; n++) add(L.findNumber(n));

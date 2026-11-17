@@ -169,7 +169,8 @@ const TRACE = (() => {
     // owner[j] is the nearest stroke (used by tests); counts(j, n) is the rule the check uses
     const owner = new Int16Array(M * M).fill(-1);
     for (let j = 0; j < M * M; j++) dist.forEach((d, n) => { if (d[j] === nearest[j] && owner[j] < 0) owner[j] = n; });
-    return { M, segments: segs.map(sg => sg.pts), owner, dist, nearest };
+    const len = segs.reduce((a, sg) => a + sg.px.length, 0); // how long the letter's centre line is
+    return { M, segments: segs.map(sg => sg.pts), owner, dist, nearest, len };
   }
 
   /* ----- judging ----- */
@@ -255,6 +256,25 @@ const TRACE = (() => {
     for (const q of sk) b += Math.min(nearest(q, pts), 12);
     return a / pts.length + b / sk.length;
   }
+  // A scribble goes back and forth: count the near U-turns in each stroke. Even M and W have
+  // only three or four sharp points; a zigzag has many.
+  function uTurns(strokes) {
+    let most = 0;
+    for (const st of strokes) {
+      const pts = [st[0]];
+      for (const p of st) if (Math.hypot(p.x - pts[pts.length - 1].x, p.y - pts[pts.length - 1].y) >= 3) pts.push(p);
+      let n = 0, lastTurn = -9;
+      for (let k = 1; k < pts.length - 1; k++) {
+        const ax = pts[k].x - pts[k - 1].x, ay = pts[k].y - pts[k - 1].y, bx = pts[k + 1].x - pts[k].x, by = pts[k + 1].y - pts[k].y;
+        const cos = (ax * bx + ay * by) / (Math.hypot(ax, ay) * Math.hypot(bx, by) || 1);
+        if (cos < -0.75 && k - lastTurn > 1) { n++; lastTurn = k; }
+      }
+      most = Math.max(most, n);
+    }
+    return most;
+  }
+  const scribbly = strokes => uTurns(strokes) >= 6;
+
   // strokes: arrays of {x, y} in mask pixels. rivals: the other letters it must look less like.
   function written(strokes, ch, M, draw, rivals) {
     strokes = strokes.filter(st => st.length);
@@ -285,8 +305,8 @@ const TRACE = (() => {
       if (d < best) { best = d; like = o; }
     }
     const closest = mine <= best + CFG.rivalSlack;
-    return { pass: r.pass && closest && tidy >= CFG.tidy && amount <= CFG.maxInk, parts: r.pass, closest, tidy, amount, mine, best, like, progress: r.progress };
+    return { pass: r.pass && closest && tidy >= CFG.tidy && amount <= CFG.maxInk && !scribbly(strokes), parts: r.pass, closest, tidy, amount, mine, best, like, progress: r.progress, strayOk: r.strayOk, unreached: r.unreached };
   }
 
-  return { analyse, judge, config, DEF, written, glyph, skeleton: (px, M) => thin(binary(px, M), M) };
+  return { analyse, judge, config, DEF, written, scribbly, glyph, skeleton: (px, M) => thin(binary(px, M), M) };
 })();
